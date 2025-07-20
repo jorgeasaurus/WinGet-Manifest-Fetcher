@@ -17,7 +17,7 @@ function Clear-WingetManifestCache {
         Clear-WingetManifestCache -Force
         Clears the cache without prompting.
     #>
-    [CmdletBinding(SupportsShouldProcess)]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
     param(
         [Parameter()]
         [switch]$Force
