@@ -23,11 +23,15 @@ jobs:
           $bumped = $GithubVersion -ge $GalleryVersion
 
           # Set the output named "version_bumped" using environment files
-          Write-Host "version_bumped=$bumped" >> $env:GITHUB_OUTPUT
+          if ($bumped) {
+              "version_bumped=true" >> $env:GITHUB_OUTPUT
+          } else {
+              "version_bumped=false" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Publish to PSGallery
         shell: pwsh
-        if: steps.check_if_versions_bumped.outputs.version_bumped == 'True'
+        if: steps.check_if_versions_bumped.outputs.version_bumped == 'true'
         env:
           PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: ./build.ps1 -Task Publish -Bootstrap
