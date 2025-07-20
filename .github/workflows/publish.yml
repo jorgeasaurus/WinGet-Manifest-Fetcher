@@ -22,8 +22,8 @@ jobs:
           [version]$GithubVersion = Get-MetaData -Path ./src/WinGetManifestFetcher.psd1 -PropertyName ModuleVersion -ErrorAction Stop
           $bumped = $GithubVersion -ge $GalleryVersion
 
-          # Set the output named "version_bumped"
-          Write-Host "::set-output name=version_bumped::$bumped"
+          # Set the output named "version_bumped" using environment files
+          Write-Host "version_bumped=$bumped" >> $env:GITHUB_OUTPUT
 
       - name: Publish to PSGallery
         shell: pwsh
