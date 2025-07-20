@@ -62,12 +62,8 @@ If you want to contribute or use the latest development version:
 git clone https://github.com/jorgeasaurus/WinGet-Manifest-Fetcher.git
 cd WinGet-Manifest-Fetcher
 
-# Install required modules
-Install-Module -Name PowerShellForGitHub -MinimumVersion 0.16.0 -Scope CurrentUser
-Install-Module -Name powershell-yaml -MinimumVersion 0.4.0 -Scope CurrentUser
-
-# Build the module
-./build.ps1
+# Build the module (this will install all dependencies automatically)
+./build.ps1 -Bootstrap
 
 # Import the module
 Import-Module ./output/WinGetManifestFetcher/WinGetManifestFetcher.psd1
