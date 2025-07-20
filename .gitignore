@@ -45,3 +45,6 @@ GITHUB_TOKEN.ps1
 code.code-workspace
 testapps.txt
 Tests/run-unit-tests.ps1
+
+# Blog posts
+blog-post-*.md

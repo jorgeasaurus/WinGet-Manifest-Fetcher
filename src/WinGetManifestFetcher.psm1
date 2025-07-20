@@ -37,13 +37,17 @@ $script:CacheEnabled = $true
 # Cross-platform cache directory configuration
 if ($IsWindows -or (-not (Test-Path Variable:IsWindows) -and $env:OS -eq 'Windows_NT')) {
     # Windows
-    $script:CacheDirectory = Join-Path -Path ([Environment]::GetFolderPath('LocalApplicationData')) -ChildPath 'WinGetManifestFetcher' -AdditionalChildPath 'Cache'
+    $script:CacheDirectory = Join-Path -Path ([Environment]::GetFolderPath('LocalApplicationData')) -ChildPath (Join-Path -Path 'WinGetManifestFetcher' -ChildPath 'Cache')
 } elseif ($IsMacOS -or (-not (Test-Path Variable:IsMacOS) -and $env:OS -ne 'Windows_NT' -and (uname) -eq 'Darwin')) {
     # macOS
-    $script:CacheDirectory = Join-Path -Path $HOME -ChildPath 'Library' -AdditionalChildPath 'Caches', 'WinGetManifestFetcher'
+    $script:CacheDirectory = Join-Path -Path $HOME -ChildPath (Join-Path -Path 'Library' -ChildPath (Join-Path -Path 'Caches' -ChildPath 'WinGetManifestFetcher'))
 } else {
     # Linux and other Unix-like systems
-    $script:CacheDirectory = Join-Path -Path ($env:XDG_CACHE_HOME ?? (Join-Path -Path $HOME -ChildPath '.cache')) -ChildPath 'WinGetManifestFetcher'
+    if ($env:XDG_CACHE_HOME) {
+        $script:CacheDirectory = Join-Path -Path $env:XDG_CACHE_HOME -ChildPath 'WinGetManifestFetcher'
+    } else {
+        $script:CacheDirectory = Join-Path -Path (Join-Path -Path $HOME -ChildPath '.cache') -ChildPath 'WinGetManifestFetcher'
+    }
 }
 $script:CacheExpirationMinutes = 60  # Default cache expiration time
 $script:CacheVersion = '1.0'  # Cache version for invalidation
