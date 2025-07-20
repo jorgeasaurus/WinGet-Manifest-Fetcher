@@ -75,7 +75,7 @@ Import-Module ./output/WinGetManifestFetcher/WinGetManifestFetcher.psd1
 
 ### Configure GitHub Authentication (Optional but Recommended)
 
-To avoid GitHub API rate limits, configure authentication:
+To avoid GitHub API rate limits, configure authentication using a GitHub Personal Access Token. You can create one by following [GitHub's documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 ```powershell
 # Option 1: Use environment variable
@@ -182,17 +182,16 @@ The module includes comprehensive Pester tests:
 ### Running Tests
 
 ```powershell
-# Run unit tests
-./Tests/run-unit-tests.ps1
-
-# Or use the build script to run tests
+# Use the build script to run tests
 ./build.ps1 -Task Test
 
-# Run tests with Pester directly
-Invoke-Pester ./Tests/Unit -Output Detailed
+# Use the test runner script (recommended)
+./Tests/run-unit-tests.ps1
 
-# Run integration tests (requires internet connection)
-Invoke-Pester ./Tests/Integration -Output Detailed
+# Or run specific tests that are compatible
+./build.ps1 -Task Build
+Import-Module ./output/WinGetManifestFetcher/WinGetManifestFetcher.psd1 -Force
+Invoke-Pester ./Tests/Unit/Save-WingetInstaller.Tests.ps1 -Output Detailed
 ```
 
 ### Test Structure

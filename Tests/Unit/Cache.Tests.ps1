@@ -2,32 +2,41 @@
 #Requires -Module Pester
 
 BeforeAll {
-    # Import the module
-    $modulePath = Join-Path -Path $PSScriptRoot -ChildPath "..\..\WinGetManifestFetcher.psm1" | Resolve-Path
-    Import-Module $modulePath -Force
+    # Load test helper to properly import the module
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'TestHelper.ps1')
     
-    # Store original cache settings
-    $script:originalCacheEnabled = $script:CacheEnabled
-    $script:originalCacheDirectory = $script:CacheDirectory
-    $script:originalCacheExpirationMinutes = $script:CacheExpirationMinutes
-    
-    # Set up test cache directory
-    $script:testCacheDirectory = Join-Path -Path $TestDrive -ChildPath "TestCache"
-    New-Item -ItemType Directory -Path $script:testCacheDirectory -Force | Out-Null
-    
-    # Override cache directory for tests
-    $script:CacheDirectory = $script:testCacheDirectory
-    $script:CacheEnabled = $true
+    # Store original cache settings and set up test environment
+    InModuleScope WinGetManifestFetcher {
+        $script:originalCacheEnabled = $script:CacheEnabled
+        $script:originalCacheDirectory = $script:CacheDirectory
+        $script:originalCacheExpirationMinutes = $script:CacheExpirationMinutes
+        
+        # Set up test cache directory
+        $script:testCacheDirectory = Join-Path -Path $TestDrive -ChildPath "TestCache"
+        New-Item -ItemType Directory -Path $script:testCacheDirectory -Force | Out-Null
+        
+        # Override cache directory for tests
+        $script:CacheDirectory = $script:testCacheDirectory
+        $script:CacheEnabled = $true
+    }
 }
 
 AfterAll {
     # Restore original cache settings
-    $script:CacheEnabled = $script:originalCacheEnabled
-    $script:CacheDirectory = $script:originalCacheDirectory
-    $script:CacheExpirationMinutes = $script:originalCacheExpirationMinutes
+    InModuleScope WinGetManifestFetcher {
+        if ($script:originalCacheEnabled -ne $null) {
+            $script:CacheEnabled = $script:originalCacheEnabled
+        }
+        if ($script:originalCacheDirectory) {
+            $script:CacheDirectory = $script:originalCacheDirectory
+        }
+        if ($script:originalCacheExpirationMinutes) {
+            $script:CacheExpirationMinutes = $script:originalCacheExpirationMinutes
+        }
+    }
     
     # Clean up test cache directory
-    if (Test-Path -Path $script:testCacheDirectory) {
+    if ($script:testCacheDirectory -and (Test-Path -Path $script:testCacheDirectory)) {
         Remove-Item -Path $script:testCacheDirectory -Recurse -Force
     }
 }
@@ -35,22 +44,30 @@ AfterAll {
 Describe "Get-CacheItem" {
     BeforeEach {
         # Clear test cache
-        Get-ChildItem -Path $script:testCacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue | Remove-Item -Force
+        InModuleScope WinGetManifestFetcher {
+            if ($script:CacheDirectory -and (Test-Path $script:CacheDirectory)) {
+                Get-ChildItem -Path $script:CacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue | Remove-Item -Force
+            }
+        }
     }
     
     Context "When cache is disabled" {
         It "Should return null when cache is disabled" {
-            $script:CacheEnabled = $false
-            $result = Get-CacheItem -Key "test_key"
-            $result | Should -BeNullOrEmpty
-            $script:CacheEnabled = $true
+            InModuleScope WinGetManifestFetcher {
+                $script:CacheEnabled = $false
+                $result = Get-CacheItem -Key "test_key"
+                $result | Should -BeNullOrEmpty
+                $script:CacheEnabled = $true
+            }
         }
     }
     
     Context "When cache item does not exist" {
         It "Should return null for non-existent cache key" {
-            $result = Get-CacheItem -Key "non_existent_key"
-            $result | Should -BeNullOrEmpty
+            InModuleScope WinGetManifestFetcher {
+                $result = Get-CacheItem -Key "non_existent_key"
+                $result | Should -BeNullOrEmpty
+            }
         }
     }
     

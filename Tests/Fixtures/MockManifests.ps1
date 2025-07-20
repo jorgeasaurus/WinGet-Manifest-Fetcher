@@ -201,5 +201,4 @@ function Get-MockManifest {
     return $null
 }
 
-# Export the function
-Export-ModuleMember -Function Get-MockManifest -Variable MockManifests
+# Function and variable are now available in the current scope

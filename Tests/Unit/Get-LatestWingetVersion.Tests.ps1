@@ -8,15 +8,11 @@
 #>
 
 BeforeAll {
-    # Get the module path
-    $ModulePath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-    $ModuleName = 'WinGetManifestFetcher'
-    
-    # Import module
-    Import-Module "$ModulePath\$ModuleName.psm1" -Force
+    # Load test helper to properly import the module
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'TestHelper.ps1')
     
     # Import mock data
-    . "$PSScriptRoot\..\Fixtures\MockManifests.ps1"
+    . (Join-Path $PSScriptRoot '..' 'Fixtures' 'MockManifests.ps1')
 }
 
 Describe 'Get-LatestWingetVersion - Edge Cases' {
