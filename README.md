@@ -129,7 +129,7 @@ Save-WingetInstaller -App "7zip.7zip" -Path "C:\Downloads"
 Save-WingetInstaller -App "Git.Git" -Architecture "x64" -Path "./Downloads"
 
 # Download specific installer type
-Save-WingetInstaller -App "Notepad++.Notepad++" -InstallerType "msi" -Path "./Downloads"
+Save-WingetInstaller -App "Notepad++.Notepad++" -InstallerType "nullsoft" -Path "./Downloads"
 
 # Download with verbose output to see hash verification
 Save-WingetInstaller -App "Microsoft.VisualStudioCode" -Verbose
@@ -171,44 +171,28 @@ $result.Installers | Where-Object { $_.Architecture -eq 'x64' }
 # Export package information to JSON
 Get-LatestWingetVersion -App "Mozilla.Firefox" | ConvertTo-Json -Depth 5 | Out-File firefox-info.json
 
-# Get all Python packages
-Get-WingetPackagesByPublisher -Publisher "Python" -IncludeVersions
+# Get all Google packages with version information
+Get-WingetPackagesByPublisher -Publisher "Google" -IncludeVersions
 ```
 
 ## 🧪 Testing
 
-The module includes comprehensive Pester tests and several test scripts:
+The module includes comprehensive Pester tests:
 
-### Running Pester Tests
+### Running Tests
 
 ```powershell
-# Run all tests
-./Invoke-PesterTests.ps1
+# Run unit tests
+./Tests/run-unit-tests.ps1
 
-# Run only unit tests with code coverage
-./Invoke-PesterTests.ps1 -TestType Unit -CodeCoverage
+# Or use the build script to run tests
+./build.ps1 -Task Test
+
+# Run tests with Pester directly
+Invoke-Pester ./Tests/Unit -Output Detailed
 
 # Run integration tests (requires internet connection)
-./Invoke-PesterTests.ps1 -TestType Integration
-
-# Generate test results in JUnit format
-./Invoke-PesterTests.ps1 -OutputFormat JUnitXml
-```
-
-### Manual Test Scripts
-
-```powershell
-# Test all apps from app-paths.json
-./Test-AllApps.ps1 -UseVersionSource
-
-# Quick validation of sample apps
-./Test-QuickValidation.ps1 -MaxApps 10
-
-# Test publisher search functionality
-./Test-PublisherSearch.ps1 -TestPartialMatch -TestWithVersions
-
-# Test version source performance
-./Test-VersionSource.ps1
+Invoke-Pester ./Tests/Integration -Output Detailed
 ```
 
 ### Test Structure
@@ -219,16 +203,13 @@ The module includes comprehensive Pester tests and several test scripts:
 
 ## 📊 Performance Optimization
 
-### Using app-paths.json
+### Using Version Source Paths
 
-The module includes an `app-paths.json` file with pre-defined version source paths for common applications. This enables significantly faster lookups:
+For faster lookups, you can provide the version source path directly when you know the package location:
 
 ```powershell
-# Update app-paths.json from application manifests
-./Update-AppPaths.ps1
-
-# Use predefined paths for batch operations
-./Get-AppsFromPaths.ps1 -ExportResults
+# Use version source for faster retrieval
+Get-LatestWingetVersion -App "7zip.7zip" -VersionSource "manifests/7/7zip/7zip"
 ```
 
 Using version source paths typically provides 50-70% faster retrieval times compared to searching.
