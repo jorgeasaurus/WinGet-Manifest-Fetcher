@@ -37,7 +37,7 @@ function Get-WingetPackagesByPublisher {
         - PackageName: The package name
         - PackageIdentifier: The full WinGet package identifier
         - ManifestPath: Path to the package in the repository
-        - LatestVersion: The latest version (if IncludeVersions is specified)
+        - LatestVersion: The latest version (only present when -IncludeVersions is specified)
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
@@ -146,26 +146,30 @@ function Get-WingetPackagesByPublisher {
                     $packageList = if ($packageDirs -is [array]) { $packageDirs } elseif ($packageDirs.entries) { $packageDirs.entries } else { @() }
                     
                     foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
-                        $packageInfo = [PSCustomObject]@{
+                        # Build base package info
+                        $packageProps = @{
                             Publisher = $pub.Name
                             PackageName = $pkg.name
                             PackageIdentifier = "$($pub.Name).$($pkg.name)"
                             ManifestPath = $pkg.path
-                            LatestVersion = $null
                         }
                         
                         # Get version information if requested
                         if ($IncludeVersions) {
+                            $packageProps['LatestVersion'] = $null
+                            
                             try {
-                                Write-Verbose "Getting version info for $($packageInfo.PackageIdentifier)"
-                                $versionInfo = Get-LatestWingetVersion -App $packageInfo.PackageIdentifier -VersionSource $pkg.path -ErrorAction SilentlyContinue
+                                Write-Verbose "Getting version info for $($packageProps.PackageIdentifier)"
+                                $versionInfo = Get-LatestWingetVersion -App $packageProps.PackageIdentifier -VersionSource $pkg.path -ErrorAction SilentlyContinue
                                 if ($versionInfo) {
-                                    $packageInfo.LatestVersion = $versionInfo.PackageVersion
+                                    $packageProps['LatestVersion'] = $versionInfo.PackageVersion
                                 }
                             } catch {
-                                Write-Verbose "Could not get version for $($packageInfo.PackageIdentifier): $_"
+                                Write-Verbose "Could not get version for $($packageProps.PackageIdentifier): $_"
                             }
                         }
+                        
+                        $packageInfo = [PSCustomObject]$packageProps
                         
                         $packages += $packageInfo
                         
