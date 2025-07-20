@@ -1,0 +1,47 @@
+# Build output
+output/
+build/
+release/
+
+# Development
+*.bak
+*.cache
+*.log
+*.swp
+.DS_Store
+Thumbs.db
+
+# PowerShell
+*.pssproj
+*.psproj.user
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Testing
+TestResults.xml
+coverage.xml
+*.coverage
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Module cache
+WinGetManifestFetcher.psd1.bak
+
+# Local configuration
+local.settings.json
+*.local.ps1
+
+# Dependencies downloaded during build
+Dependencies/
+GITHUB_TOKEN.ps1
+code.code-workspace
+testapps.txt
+Tests/run-unit-tests.ps1
