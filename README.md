@@ -334,7 +334,13 @@ Set-WingetManifestCacheEnabled -Enabled $true   # Enable
 4. **Slow performance**
    - Use the `-VersionSource` parameter when you know the package path
    - Configure GitHub authentication to increase rate limits
-   - Use `app-paths.json` for common applications
+   - Enable caching (enabled by default)
+
+5. **YamlDotNet.Core.Parser errors on ARM64 Windows**
+   - Known issue with powershell-yaml module on ARM64 Windows (e.g., Parallels on Apple Silicon)
+   - Error: `Cannot find type [YamlDotNet.Core.Parser]: verify that the assembly containing this type is loaded`
+   - **Workaround**: Use PowerShell 5.1 instead of PowerShell 7 on ARM64 Windows
+   - This is an upstream issue with the powershell-yaml module's .NET dependencies
 
 ## 🤝 Contributing
 

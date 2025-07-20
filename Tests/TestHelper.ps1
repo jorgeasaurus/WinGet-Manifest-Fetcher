@@ -63,6 +63,9 @@ if (`$IsWindows -or (-not (Test-Path Variable:IsWindows) -and `$env:OS -eq 'Wind
 `$script:CacheExpirationMinutes = 60  # Default cache expiration time
 `$script:CacheVersion = '1.0'  # Cache version for invalidation
 
+# Disable PowerShellForGitHub telemetry by default
+Set-GitHubConfiguration -DisableTelemetry -SessionOnly
+
 # Configure GitHub authentication if token is available
 if (`$env:GITHUB_TOKEN) {
     `$secureToken = ConvertTo-SecureString -String `$env:GITHUB_TOKEN -AsPlainText -Force
