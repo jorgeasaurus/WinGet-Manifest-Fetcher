@@ -1,7 +1,27 @@
 # Build script for WinGetManifestFetcher module
 
+# Synopsis: Install required dependencies
+task InstallDependencies {
+    $requiredModules = @(
+        @{Name = 'PowerShellForGitHub'; MinVersion = '0.16.0' },
+        @{Name = 'powershell-yaml'; MinVersion = '0.4.0' },
+        @{Name = 'Pester'; MinVersion = '5.0.0' },
+        @{Name = 'PSScriptAnalyzer'; MinVersion = '1.19.0' }
+    )
+    
+    foreach ($module in $requiredModules) {
+        $installed = Get-Module -ListAvailable -Name $module.Name | 
+                     Where-Object { $_.Version -ge $module.MinVersion }
+        
+        if (-not $installed) {
+            Write-Build Yellow "Installing $($module.Name) $($module.MinVersion)..."
+            Install-Module -Name $module.Name -MinimumVersion $module.MinVersion -Force -Scope CurrentUser
+        }
+    }
+}
+
 # Synopsis: Build the PowerShell module
-task Build {
+task Build InstallDependencies, {
     $moduleName = 'WinGetManifestFetcher'
     $srcPath = Join-Path $BuildRoot 'src'
     $outPath = Join-Path $BuildRoot 'output'
@@ -57,7 +77,7 @@ task Build {
 }
 
 # Synopsis: Run Pester tests
-task Test {
+task Test InstallDependencies, {
     $testPath = Join-Path $BuildRoot 'Tests'
     $testFile = Join-Path $testPath 'WinGetManifestFetcher.Mock.Tests.ps1'
     
@@ -71,7 +91,7 @@ task Test {
 }
 
 # Synopsis: Run PSScriptAnalyzer
-task Analyze {
+task Analyze InstallDependencies, {
     $srcPath = Join-Path $BuildRoot 'src'
     $settingsPath = Join-Path $BuildRoot 'PSScriptAnalyzerSettings.psd1'
     
