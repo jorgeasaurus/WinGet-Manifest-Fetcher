@@ -1,0 +1,40 @@
+# Files and folders to exclude from PowerShell Gallery package
+
+# Documentation website
+docs/
+
+# Build and development files
+build.ps1
+WinGetManifestFetcher.build.ps1
+PSScriptAnalyzerSettings.psd1
+
+# Test files
+Tests/
+testapps.txt
+
+# Examples that are for testing only
+Examples/AllLatestVersionsReport.ps1
+Examples/AllLatestVersionReport-Parallel.ps1
+Examples/Test-PopularApps.ps1
+
+# Development and local files
+GITHUB_TOKEN.ps1
+code.code-workspace
+coverage.xml
+
+# Blog and documentation source
+blog-post-*.md
+CHANGELOG-*.md
+
+# Logo at root (keep only the one in module)
+logo.png
+
+# Git files
+.gitignore
+.gitattributes
+
+# VSCode
+.vscode/
+
+# Build output
+output/

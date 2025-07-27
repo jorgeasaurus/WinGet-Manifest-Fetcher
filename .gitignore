@@ -43,8 +43,10 @@ local.settings.json
 Dependencies/
 GITHUB_TOKEN.ps1
 code.code-workspace
-testapps.txt
+testapps*.txt
 Tests/run-unit-tests.ps1
 
 # Blog posts
 blog-post-*.md
+Examples/AllLatestVersionsReport.ps1
+Examples/AllLatestVersionReport-Parallel.ps1

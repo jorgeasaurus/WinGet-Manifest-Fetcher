@@ -12,7 +12,7 @@
 RootModule = 'WinGetManifestFetcher.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.3.3'
+ModuleVersion = '1.4.0'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -129,6 +129,20 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+## Version 1.4.0
+- Enhanced version sorting to handle complex formats (e.g., Spotify's git hash suffixes)
+- Added comprehensive test suite for popular applications
+- Improved error handling for 404 errors and missing packages
+- Fixed module function loading when running from source
+- Enhanced AllLatestVersionsReport.ps1 with better error handling and filtering
+- Added automated test runners with code coverage support
+- All tests now run without user prompts
+
+## Version 1.3.3
+- Fixed PowerShell 5.1 compatibility issues
+- Disabled telemetry by default
+- Documented ARM64 Windows known issue with powershell-yaml
+
 ## Version 1.3.0
 - Added Save-WingetInstaller function for downloading installers with SHA256 hash verification
 - Support for filtering downloads by architecture and installer type

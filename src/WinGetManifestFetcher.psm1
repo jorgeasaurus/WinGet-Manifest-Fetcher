@@ -8,7 +8,7 @@
     installer information from WinGet manifests without requiring the WinGet client to be installed.
 .NOTES
     Author: WinGet Manifest Fetcher Contributors
-    Version: 1.2.0
+    Version: 1.4.0
 #>
 
 # Import required modules
@@ -31,6 +31,14 @@ foreach ($module in $requiredModules) {
 $script:WinGetRepoOwner = 'microsoft'
 $script:WinGetRepoName = 'winget-pkgs'
 $script:ManifestPath = 'manifests'
+
+# Verify variables are set
+if (-not $script:WinGetRepoOwner -or -not $script:WinGetRepoName) {
+    Write-Warning "Module variables not properly initialized. Setting defaults."
+    $script:WinGetRepoOwner = 'microsoft'
+    $script:WinGetRepoName = 'winget-pkgs'
+    $script:ManifestPath = 'manifests'
+}
 
 # Cache configuration
 $script:CacheEnabled = $true
@@ -79,3 +87,32 @@ if ($script:CacheEnabled -and -not (Test-Path -Path $script:CacheDirectory)) {
 # NOTE: PowerShellBuild will automatically include all functions from src/Private and src/Public
 # Private functions will be available within the module
 # Public functions will be exported
+
+# When running from source (not built), manually dot-source the functions
+if (-not $PSScriptRoot) {
+    $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
+# Check if we're running from source by looking for the src folder structure
+$srcPath = $PSScriptRoot
+if (Test-Path (Join-Path $srcPath 'Private') -PathType Container) {
+    Write-Verbose "Running from source - loading functions manually"
+    
+    # Dot source the private functions
+    $privateFunctions = Get-ChildItem -Path (Join-Path $srcPath 'Private') -Filter '*.ps1' -Recurse
+    foreach ($function in $privateFunctions) {
+        Write-Verbose "Loading private function: $($function.Name)"
+        . $function.FullName
+    }
+    
+    # Dot source the public functions
+    $publicFunctions = Get-ChildItem -Path (Join-Path $srcPath 'Public') -Filter '*.ps1' -Recurse
+    foreach ($function in $publicFunctions) {
+        Write-Verbose "Loading public function: $($function.Name)"
+        . $function.FullName
+    }
+    
+    # Export public functions
+    $publicFunctionNames = $publicFunctions.BaseName
+    Export-ModuleMember -Function $publicFunctionNames
+}

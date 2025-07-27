@@ -117,15 +117,15 @@ function Get-LatestWingetVersion {
                 $pathParts = $VersionSource -split '/'
                 if ($pathParts.Count -ge 3) {
                     # Skip 'manifests' and letter directory
-                    $packageParts = $pathParts[2..($pathParts.Count-1)]
+                    $packageParts = $pathParts[2..($pathParts.Count - 1)]
                     $packageId = $packageParts -join '.'
                     
                     $foundPackages = @(@{
-                        Publisher = $packageParts[0]
-                        Package = $packageParts[1..($packageParts.Count-1)] -join '.'
-                        Path = $VersionSource
-                        PackageId = $packageId
-                    })
+                            Publisher = $packageParts[0]
+                            Package   = $packageParts[1..($packageParts.Count - 1)] -join '.'
+                            Path      = $VersionSource
+                            PackageId = $packageId
+                        })
                     
                     Write-Verbose "Using direct path for package: $packageId"
                 } else {
@@ -138,136 +138,136 @@ function Get-LatestWingetVersion {
                 $searchPublisher = $null
                 $searchPackage = $null
             
-            # Check if it's a full package identifier (Publisher.Package)
-            if ($App -match '^([^.]+)\.(.+)$') {
-                $searchPublisher = $Matches[1]
-                $searchPackage = $Matches[2]
-                Write-Verbose "Detected package identifier format: $searchPublisher.$searchPackage"
-            }
-            # Check if it's Publisher/Package format
-            elseif ($App -match '^([^/]+)/(.+)$') {
-                $searchPublisher = $Matches[1]
-                $searchPackage = $Matches[2]
-                Write-Verbose "Detected publisher/package format: $searchPublisher/$searchPackage"
-            }
-            
-            # If we have publisher and package, try direct path
-            if ($searchPublisher -and $searchPackage) {
-                $firstLetter = $searchPublisher.Substring(0, 1).ToLower()
-                # Replace dots with forward slashes in the package name for path construction
-                $packagePathPart = $searchPackage -replace '\.', '/'
-                $packagePath = "$ManifestPath/$firstLetter/$searchPublisher/$packagePathPart"
-                
-                Write-Verbose "Found package path: $packagePath"
-                
-                try {
-                    $testContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $packagePath -ErrorAction Stop
-                    
-                    # Check if we got a single directory item (PowerShellForGitHub quirk)
-                    if ($testContent -and $testContent.type -eq 'dir') {
-                        $foundPackages = @(@{
-                            Publisher = $searchPublisher
-                            Package = $searchPackage
-                            Path = $packagePath
-                            PackageId = "$searchPublisher.$searchPackage"
-                        })
-                    }
-                } catch {
-                    Write-Verbose "Package not found at direct path, will search"
-                    $foundPackages = @()
+                # Check if it's a full package identifier (Publisher.Package)
+                if ($App -match '^([^.]+)\.(.+)$') {
+                    $searchPublisher = $Matches[1]
+                    $searchPackage = $Matches[2]
+                    Write-Verbose "Detected package identifier format: $searchPublisher.$searchPackage"
                 }
-            }
+                # Check if it's Publisher/Package format
+                elseif ($App -match '^([^/]+)/(.+)$') {
+                    $searchPublisher = $Matches[1]
+                    $searchPackage = $Matches[2]
+                    Write-Verbose "Detected publisher/package format: $searchPublisher/$searchPackage"
+                }
             
-            # If direct path didn't work or wasn't applicable, search common publishers
-            if (-not $foundPackages -or $foundPackages.Count -eq 0) {
-                Write-Verbose "Searching for package by name..."
+                # If we have publisher and package, try direct path
+                if ($searchPublisher -and $searchPackage) {
+                    $firstLetter = $searchPublisher.Substring(0, 1).ToLower()
+                    # Replace dots with forward slashes in the package name for path construction
+                    $packagePathPart = $searchPackage -replace '\.', '/'
+                    $packagePath = "$ManifestPath/$firstLetter/$searchPublisher/$packagePathPart"
                 
-                # Common publishers to check first for optimization
-                $commonPublishers = @(
-                    'Microsoft', 'Mozilla', 'Google', 'Adobe', 'Oracle', 'VideoLAN',
-                    '7zip', 'Notepad++', 'Python', 'NodeJS', 'Git', 'Docker',
-                    'JetBrains', 'GitHub', 'Zoom', 'Slack', 'Discord', 'Spotify',
-                    'Greenshot', 'Igor Pavlov'
-                )
-                
-                $foundPackages = @()
-                
-                # First, check common publishers
-                foreach ($publisher in $commonPublishers) {
-                    $firstLetter = $publisher.Substring(0, 1).ToLower()
-                    $publisherPath = "$ManifestPath/$firstLetter/$publisher"
-                    
+                    Write-Verbose "Found package path: $packagePath"
+
                     try {
-                        $packages = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $publisherPath -ErrorAction SilentlyContinue
-                        
-                        if ($packages) {
-                            # Handle PowerShellForGitHub structure
-                            $packageList = if ($packages -is [array]) { $packages } elseif ($packages.entries) { $packages.entries } else { @() }
-                            
-                            foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
-                                if ($pkg.name -like "*$App*" -or $App -like "*$($pkg.name)*" -or 
-                                    "$publisher.$($pkg.name)" -like "*$App*" -or $App -like "*$publisher.$($pkg.name)*") {
-                                    Write-Verbose "Found potential match: $publisher.$($pkg.name)"
-                                    $foundPackages += @{
-                                        Publisher = $publisher
-                                        Package = $pkg.name
-                                        Path = "$publisherPath/$($pkg.name)"
-                                        PackageId = "$publisher.$($pkg.name)"
-                                    }
-                                }
-                            }
+                        $testContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $packagePath -ErrorAction Stop
+
+                        # Check if we got a single directory item (PowerShellForGitHub quirk)
+                        if ($testContent -and $testContent.type -eq 'dir') {
+                            $foundPackages = @(@{
+                                    Publisher = $searchPublisher
+                                    Package   = $searchPackage
+                                    Path      = $packagePath
+                                    PackageId = "$searchPublisher.$searchPackage"
+                                })
                         }
                     } catch {
-                        # Silently continue if publisher doesn't exist
-                        Write-Verbose "Publisher not found: $pub - continuing search"
-                    }
-                    
-                    # Stop searching if we found matches
-                    if ($foundPackages.Count -gt 0) {
-                        break
+                        Write-Verbose "Package not found at direct path, will search"
+                        $foundPackages = @()
                     }
                 }
+            
+                # If direct path didn't work or wasn't applicable, search common publishers
+                if (-not $foundPackages -or $foundPackages.Count -eq 0) {
+                    Write-Verbose "Searching for package by name..."
                 
-                # If still no results, do a broader search (but limited to avoid timeout)
-                if ($foundPackages.Count -eq 0) {
-                    Write-Verbose "No matches in common publishers, searching more broadly..."
+                    # Common publishers to check first for optimization
+                    $commonPublishers = @(
+                        'Microsoft', 'Mozilla', 'Google', 'Adobe', 'Oracle', 'VideoLAN',
+                        '7zip', 'Notepad++', 'Python', 'NodeJS', 'Git', 'Docker',
+                        'JetBrains', 'GitHub', 'Zoom', 'Slack', 'Discord', 'Spotify',
+                        'Greenshot', 'Igor Pavlov'
+                    )
+                
+                    $foundPackages = @()
+                
+                    # First, check common publishers
+                    foreach ($publisher in $commonPublishers) {
+                        $firstLetter = $publisher.Substring(0, 1).ToLower()
+                        $publisherPath = "$ManifestPath/$firstLetter/$publisher"
                     
-                    # Get first letter of search term for targeted search
-                    $searchLetter = $App.Substring(0, 1).ToLower()
-                    
-                    try {
-                        $publisherDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path "$ManifestPath/$searchLetter" -ErrorAction Stop
+                        try {
+                            $packages = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $publisherPath -ErrorAction SilentlyContinue
                         
-                        # Handle PowerShellForGitHub structure
-                        $dirList = if ($publisherDirs -is [array]) { $publisherDirs } elseif ($publisherDirs.entries) { $publisherDirs.entries } else { @() }
-                        
-                        foreach ($pubDir in $dirList | Where-Object { $_.type -eq 'dir' } | Select-Object -First 20) {
-                            try {
-                                $packages = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $pubDir.path -ErrorAction SilentlyContinue
-                                
+                            if ($packages) {
+                                # Handle PowerShellForGitHub structure
                                 $packageList = if ($packages -is [array]) { $packages } elseif ($packages.entries) { $packages.entries } else { @() }
                                 
                                 foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
-                                    if ($pkg.name -like "*$App*" -or $App -like "*$($pkg.name)*") {
-                                        Write-Verbose "Found potential match: $($pubDir.name).$($pkg.name)"
+                                    if ($pkg.name -like "*$App*" -or $App -like "*$($pkg.name)*" -or 
+                                        "$publisher.$($pkg.name)" -like "*$App*" -or $App -like "*$publisher.$($pkg.name)*") {
+                                        Write-Verbose "Found potential match: $publisher.$($pkg.name)"
                                         $foundPackages += @{
-                                            Publisher = $pubDir.name
-                                            Package = $pkg.name
-                                            Path = "$($pubDir.path)/$($pkg.name)"
-                                            PackageId = "$($pubDir.name).$($pkg.name)"
+                                            Publisher = $publisher
+                                            Package   = $pkg.name
+                                            Path      = "$publisherPath/$($pkg.name)"
+                                            PackageId = "$publisher.$($pkg.name)"
                                         }
                                     }
                                 }
-                            } catch {
-                                # Continue on error - package directory might not have accessible content
-                                Write-Verbose "Could not access package content for $($pkg.name) - continuing"
                             }
+                        } catch {
+                            # Silently continue if publisher doesn't exist
+                            Write-Verbose "Publisher not found: $pub - continuing search"
                         }
-                    } catch {
-                        Write-Warning "Could not search manifests directory: $_"
+                    
+                        # Stop searching if we found matches
+                        if ($foundPackages.Count -gt 0) {
+                            break
+                        }
+                    }
+                
+                    # If still no results, do a broader search (but limited to avoid timeout)
+                    if ($foundPackages.Count -eq 0) {
+                        Write-Verbose "No matches in common publishers, searching more broadly..."
+                    
+                        # Get first letter of search term for targeted search
+                        $searchLetter = $App.Substring(0, 1).ToLower()
+                    
+                        try {
+                            $publisherDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path "$ManifestPath/$searchLetter" -ErrorAction Stop
+                        
+                            # Handle PowerShellForGitHub structure
+                            $dirList = if ($publisherDirs -is [array]) { $publisherDirs } elseif ($publisherDirs.entries) { $publisherDirs.entries } else { @() }
+                        
+                            foreach ($pubDir in $dirList | Where-Object { $_.type -eq 'dir' } | Select-Object -First 20) {
+                                try {
+                                    $packages = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $pubDir.path -ErrorAction SilentlyContinue
+                                
+                                    $packageList = if ($packages -is [array]) { $packages } elseif ($packages.entries) { $packages.entries } else { @() }
+                                
+                                    foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
+                                        if ($pkg.name -like "*$App*" -or $App -like "*$($pkg.name)*") {
+                                            Write-Verbose "Found potential match: $($pubDir.name).$($pkg.name)"
+                                            $foundPackages += @{
+                                                Publisher = $pubDir.name
+                                                Package   = $pkg.name
+                                                Path      = "$($pubDir.path)/$($pkg.name)"
+                                                PackageId = "$($pubDir.name).$($pkg.name)"
+                                            }
+                                        }
+                                    }
+                                } catch {
+                                    # Continue on error - package directory might not have accessible content
+                                    Write-Verbose "Could not access package content for $($pkg.name) - continuing"
+                                }
+                            }
+                        } catch {
+                            Write-Warning "Could not search manifests directory: $_"
+                        }
                     }
                 }
-            }
             } # End of else block for non-VersionSource path
             
             if ($foundPackages.Count -eq 0) {
@@ -285,7 +285,7 @@ function Get-LatestWingetVersion {
                     # Get version directories
                     Write-Verbose "Retrieving version folders..."
                     $versionContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $package.Path -ErrorAction Stop
-                    
+
                     # Handle PowerShellForGitHub returning different structures
                     $versionDirs = if ($versionContent -is [array]) {
                         $versionContent
@@ -301,13 +301,31 @@ function Get-LatestWingetVersion {
                         continue
                     }
                     
+                    if ($package.Path -eq 'manifests/m/Mozilla/Firefox') {
+                        $versionDirs = $versionDirs | Where-Object { $_.name -match '^([\d]+(?:\.[\d]+)*)' }
+                    }
+
                     # Sort versions and get the latest
                     Write-Verbose "Found $($versionDirs.Count) versions. Determining latest version..."
-                    $sortedVersions = $versionDirs | Where-Object { $_.type -eq 'dir' -and $_.name -ne '.validation' } | Sort-Object {
-                        try {
-                            [Version]($_.name -replace '[^0-9.]', '')
-                        } catch {
-                            [Version]'0.0.0'
+                    $ignoreFolders = 'X|VideoCapture|Telegraph|WiiBalanceBoard|Extension|Module|CN|.validation|Preview|Nightly|Beta|Alpha|Experimental|Canary|Dev|Test|RC|ReleaseCandidate|LTS|EXE'
+                    $sortedVersions = $versionDirs |
+                    Where-Object { $_.type -eq 'dir' -and $_.name -notmatch $ignoreFolders } |
+                    Sort-Object -Property @{
+                        Expression = {
+                            # Extract the numeric prefix (e.g. "1.2.69.448" from "1.2.69.448.ge76b8882")
+                            if ($_.name -match '^([\d]+(?:\.[\d]+)*)') {
+                                $numeric = $Matches[1]
+                                try {
+                                    # Use Version on the pure numeric string
+                                    [Version]$numeric
+                                } catch {
+                                    # Fallback if the numeric string isn't a valid Version
+                                    $_.name
+                                }
+                            } else {
+                                # No leading numeric portion: sort by raw name
+                                $_.name
+                            }
                         }
                     } -Descending
                     
@@ -375,25 +393,25 @@ function Get-LatestWingetVersion {
                     
                     # Build the result object with all metadata
                     $result = [PSCustomObject]@{
-                        PackageIdentifier = $installerData.PackageIdentifier
-                        PackageVersion = $installerData.PackageVersion
-                        PackageName = if ($localeData.PackageName) { $localeData.PackageName } elseif ($packageData.PackageName) { $packageData.PackageName } else { $null }
-                        Publisher = if ($localeData.Publisher) { $localeData.Publisher } elseif ($packageData.Publisher) { $packageData.Publisher } else { $null }
-                        PublisherUrl = if ($localeData.PublisherUrl) { $localeData.PublisherUrl } elseif ($packageData.PublisherUrl) { $packageData.PublisherUrl } else { $null }
+                        PackageIdentifier   = $installerData.PackageIdentifier
+                        PackageVersion      = $installerData.PackageVersion
+                        PackageName         = if ($localeData.PackageName) { $localeData.PackageName } elseif ($packageData.PackageName) { $packageData.PackageName } else { $null }
+                        Publisher           = if ($localeData.Publisher) { $localeData.Publisher } elseif ($packageData.Publisher) { $packageData.Publisher } else { $null }
+                        PublisherUrl        = if ($localeData.PublisherUrl) { $localeData.PublisherUrl } elseif ($packageData.PublisherUrl) { $packageData.PublisherUrl } else { $null }
                         PublisherSupportUrl = if ($localeData.PublisherSupportUrl) { $localeData.PublisherSupportUrl } elseif ($packageData.PublisherSupportUrl) { $packageData.PublisherSupportUrl } else { $null }
-                        PrivacyUrl = if ($localeData.PrivacyUrl) { $localeData.PrivacyUrl } elseif ($packageData.PrivacyUrl) { $packageData.PrivacyUrl } else { $null }
-                        Author = if ($localeData.Author) { $localeData.Author } elseif ($packageData.Author) { $packageData.Author } else { $null }
-                        License = if ($localeData.License) { $localeData.License } elseif ($packageData.License) { $packageData.License } else { $null }
-                        LicenseUrl = if ($localeData.LicenseUrl) { $localeData.LicenseUrl } elseif ($packageData.LicenseUrl) { $packageData.LicenseUrl } else { $null }
-                        Copyright = if ($localeData.Copyright) { $localeData.Copyright } elseif ($packageData.Copyright) { $packageData.Copyright } else { $null }
-                        CopyrightUrl = if ($localeData.CopyrightUrl) { $localeData.CopyrightUrl } elseif ($packageData.CopyrightUrl) { $packageData.CopyrightUrl } else { $null }
-                        ShortDescription = if ($localeData.ShortDescription) { $localeData.ShortDescription } elseif ($packageData.ShortDescription) { $packageData.ShortDescription } else { $null }
-                        Description = if ($localeData.Description) { $localeData.Description } elseif ($packageData.Description) { $packageData.Description } else { $null }
-                        Moniker = if ($localeData.Moniker) { $localeData.Moniker } elseif ($packageData.Moniker) { $packageData.Moniker } else { $null }
-                        Tags = if ($localeData.Tags) { $localeData.Tags } elseif ($packageData.Tags) { $packageData.Tags } else { @() }
-                        ReleaseNotes = if ($localeData.ReleaseNotes) { $localeData.ReleaseNotes } elseif ($packageData.ReleaseNotes) { $packageData.ReleaseNotes } else { $null }
-                        ReleaseNotesUrl = if ($localeData.ReleaseNotesUrl) { $localeData.ReleaseNotesUrl } elseif ($packageData.ReleaseNotesUrl) { $packageData.ReleaseNotesUrl } else { $null }
-                        Installers = @() # Will be populated below
+                        PrivacyUrl          = if ($localeData.PrivacyUrl) { $localeData.PrivacyUrl } elseif ($packageData.PrivacyUrl) { $packageData.PrivacyUrl } else { $null }
+                        Author              = if ($localeData.Author) { $localeData.Author } elseif ($packageData.Author) { $packageData.Author } else { $null }
+                        License             = if ($localeData.License) { $localeData.License } elseif ($packageData.License) { $packageData.License } else { $null }
+                        LicenseUrl          = if ($localeData.LicenseUrl) { $localeData.LicenseUrl } elseif ($packageData.LicenseUrl) { $packageData.LicenseUrl } else { $null }
+                        Copyright           = if ($localeData.Copyright) { $localeData.Copyright } elseif ($packageData.Copyright) { $packageData.Copyright } else { $null }
+                        CopyrightUrl        = if ($localeData.CopyrightUrl) { $localeData.CopyrightUrl } elseif ($packageData.CopyrightUrl) { $packageData.CopyrightUrl } else { $null }
+                        ShortDescription    = if ($localeData.ShortDescription) { $localeData.ShortDescription } elseif ($packageData.ShortDescription) { $packageData.ShortDescription } else { $null }
+                        Description         = if ($localeData.Description) { $localeData.Description } elseif ($packageData.Description) { $packageData.Description } else { $null }
+                        Moniker             = if ($localeData.Moniker) { $localeData.Moniker } elseif ($packageData.Moniker) { $packageData.Moniker } else { $null }
+                        Tags                = if ($localeData.Tags) { $localeData.Tags } elseif ($packageData.Tags) { $packageData.Tags } else { @() }
+                        ReleaseNotes        = if ($localeData.ReleaseNotes) { $localeData.ReleaseNotes } elseif ($packageData.ReleaseNotes) { $packageData.ReleaseNotes } else { $null }
+                        ReleaseNotesUrl     = if ($localeData.ReleaseNotesUrl) { $localeData.ReleaseNotesUrl } elseif ($packageData.ReleaseNotesUrl) { $packageData.ReleaseNotesUrl } else { $null }
+                        Installers          = @() # Will be populated below
                     }
                     
                     # Process installers
@@ -403,19 +421,19 @@ function Get-LatestWingetVersion {
                     $installerObjects = @()
                     foreach ($installer in $installers) {
                         $installerObj = [PSCustomObject]@{
-                            Architecture = $installer.Architecture
-                            InstallerType = if ($installer.InstallerType) { $installer.InstallerType } else { $installerData.InstallerType }
-                            InstallerUrl = $installer.InstallerUrl
-                            InstallerSha256 = $installer.InstallerSha256
-                            Scope = if ($installer.Scope) { $installer.Scope } else { $installerData.Scope }
+                            Architecture      = $installer.Architecture
+                            InstallerType     = if ($installer.InstallerType) { $installer.InstallerType } else { $installerData.InstallerType }
+                            InstallerUrl      = $installer.InstallerUrl
+                            InstallerSha256   = $installer.InstallerSha256
+                            Scope             = if ($installer.Scope) { $installer.Scope } else { $installerData.Scope }
                             InstallerSwitches = if ($installer.InstallerSwitches) { $installer.InstallerSwitches } else { $installerData.InstallerSwitches }
-                            UpgradeBehavior = if ($installer.UpgradeBehavior) { $installer.UpgradeBehavior } else { $installerData.UpgradeBehavior }
-                            Dependencies = if ($installer.Dependencies) { $installer.Dependencies } else { $installerData.Dependencies }
-                            ProductCode = $installer.ProductCode
-                            FileExtensions = if ($installer.FileExtensions) { $installer.FileExtensions } else { $installerData.FileExtensions }
-                            Protocols = if ($installer.Protocols) { $installer.Protocols } else { $installerData.Protocols }
-                            Commands = if ($installer.Commands) { $installer.Commands } else { $installerData.Commands }
-                            InstallerLocale = if ($installer.InstallerLocale) { $installer.InstallerLocale } else { $installerData.InstallerLocale }
+                            UpgradeBehavior   = if ($installer.UpgradeBehavior) { $installer.UpgradeBehavior } else { $installerData.UpgradeBehavior }
+                            Dependencies      = if ($installer.Dependencies) { $installer.Dependencies } else { $installerData.Dependencies }
+                            ProductCode       = $installer.ProductCode
+                            FileExtensions    = if ($installer.FileExtensions) { $installer.FileExtensions } else { $installerData.FileExtensions }
+                            Protocols         = if ($installer.Protocols) { $installer.Protocols } else { $installerData.Protocols }
+                            Commands          = if ($installer.Commands) { $installer.Commands } else { $installerData.Commands }
+                            InstallerLocale   = if ($installer.InstallerLocale) { $installer.InstallerLocale } else { $installerData.InstallerLocale }
                         }
                         $installerObjects += $installerObj
                     }

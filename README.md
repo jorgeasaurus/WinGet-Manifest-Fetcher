@@ -10,6 +10,14 @@
   A PowerShell module that retrieves installer information from WinGet manifests directly from the [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) repository without requiring the WinGet client to be installed.
 </div>
 
+## 🎉 What's New in v1.4.0
+
+- **Enhanced Version Sorting**: Fixed handling of complex version formats (e.g., Spotify's `1.2.69.448.ge76b8882`)
+- **Comprehensive Test Suite**: Added automated tests for popular applications with no user prompts
+- **Improved Error Handling**: Better handling of 404 errors and missing packages
+- **Module Loading**: Functions now load properly when running from source
+- **Test Coverage**: Integrated code coverage reporting with Pester 5.x
+
 ## 🚀 Features
 
 - **Direct Repository Access**: Query WinGet manifests directly from GitHub
@@ -20,10 +28,11 @@
 - **Comprehensive Package Information**: Retrieve all metadata including installers, URLs, hashes, and more
 - **Flexible Search Options**: Search by full package ID, partial names, or publisher
 - **Architecture Filtering**: Download specific architectures (x64, x86, arm64)
-- **Installer Type Filtering**: Filter by installer type (exe, msi, msix, etc.)
+- **Installer Type Filtering**: Filter by installer type (exe, msi, msix, wix, etc.)
 - **PowerShell Native**: Built entirely in PowerShell with minimal dependencies
 - **Local Caching**: Automatic caching to reduce API calls and improve performance
 - **Cross-Platform**: Works on Windows, macOS, and Linux
+- **Robust Testing**: Comprehensive test suite with popular application validation
 
 ## 📋 Prerequisites
 
@@ -171,30 +180,44 @@ Get-LatestWingetVersion -App "Mozilla.Firefox" | ConvertTo-Json -Depth 5 | Out-F
 Get-WingetPackagesByPublisher -Publisher "Google" -IncludeVersions
 ```
 
+
 ## 🧪 Testing
 
-The module includes comprehensive Pester tests:
+The module includes comprehensive Pester tests with full automation support:
 
 ### Running Tests
 
 ```powershell
-# Use the build script to run tests
+# Run all tests with the test runner
+./Tests/Run-PopularAppsTests.ps1
+
+# Run basic unit tests
+Invoke-Pester ./Tests/Get-LatestWingetVersion.Basic.Tests.ps1
+
+# Quick manual test of popular apps
+./Examples/Test-PopularApps.ps1
+
+# Run with code coverage
+./Tests/Run-PopularAppsTests.ps1 -OutputFormat Detailed
+
+# Use the build script for full test suite
 ./build.ps1 -Task Test
-
-# Use the test runner script (recommended)
-./Tests/run-unit-tests.ps1
-
-# Or run specific tests that are compatible
-./build.ps1 -Task Build
-Import-Module ./output/WinGetManifestFetcher/WinGetManifestFetcher.psd1 -Force
-Invoke-Pester ./Tests/Unit/Save-WingetInstaller.Tests.ps1 -Output Detailed
 ```
 
 ### Test Structure
 
-- **Unit Tests**: Fast, isolated tests that use mocked GitHub API responses
-- **Integration Tests**: Real API calls to verify actual functionality
+- **Unit Tests**: Fast, isolated tests that validate core functionality
+- **Integration Tests**: Tests against popular applications (VS Code, Firefox, Chrome, etc.)
+- **Basic Tests**: Module loading, parameter validation, and error handling
+- **Popular Apps Tests**: Validates version sorting and installer information for 10+ popular packages
 - **Fixtures**: Mock manifest data for consistent offline testing
+
+### New Test Features (v1.4.0)
+- ✅ Automated tests run without user prompts
+- ✅ VS Code PowerShell extension compatible
+- ✅ Complex version format handling (e.g., Spotify's git hash suffixes)
+- ✅ Code coverage reporting
+- ✅ Performance and caching validation
 
 ## 📊 Performance Optimization
 
@@ -355,6 +378,10 @@ Contributions are welcome! Please:
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 📄 Documentation Website
+
+A beautiful HTML documentation site is available in the `docs/` folder. You can view it locally by opening `docs/index.html` in your web browser.
 
 ## 🙏 Acknowledgments
 
