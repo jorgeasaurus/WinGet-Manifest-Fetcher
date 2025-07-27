@@ -89,12 +89,13 @@ if ($script:CacheEnabled -and -not (Test-Path -Path $script:CacheDirectory)) {
 # Public functions will be exported
 
 # When running from source (not built), manually dot-source the functions
-if (-not $PSScriptRoot) {
-    $PSScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$moduleRoot = $PSScriptRoot
+if (-not $moduleRoot) {
+    $moduleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
 # Check if we're running from source by looking for the src folder structure
-$srcPath = $PSScriptRoot
+$srcPath = $moduleRoot
 if (Test-Path (Join-Path $srcPath 'Private') -PathType Container) {
     Write-Verbose "Running from source - loading functions manually"
     
