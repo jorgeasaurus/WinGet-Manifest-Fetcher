@@ -337,28 +337,50 @@ function Get-LatestWingetVersion {
                     $latestVersion = $sortedVersions[0]
                     Write-Verbose "Latest version: $($latestVersion.name)"
                     
-                    # Get manifest files for the latest version
-                    $versionPath = $package.Path + "/" + $latestVersion.name
-                    Write-Verbose "Fetching installer manifest: $versionPath/$($package.PackageId).installer.yaml"
+                    # Starting from the most recent version, find the first with a valid installer manifest
+                    for ($i = 0; $i -lt $sortedVersions.Count; $i++) {
                     
-                    $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
+                        $checkVersion = $sortedVersions[$i]
+                        Write-Verbose "Checking version: $($checkVersion.name)"
                     
-                    # Handle PowerShellForGitHub structure for manifest files
-                    $manifestFiles = if ($manifestContent -is [array]) {
-                        $manifestContent
-                    } elseif ($manifestContent.entries) {
-                        $manifestContent.entries
-                    } else {
-                        @()
+                        # Get manifest files for the latest version
+                        $versionPath = $package.Path + "/" + $checkVersion.name
+                        Write-Verbose "Fetching installer manifest: $versionPath/$($package.PackageId).installer.yaml"
+                    
+                        $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
+                    
+                        # Handle PowerShellForGitHub structure for manifest files
+                        $manifestFiles = if ($manifestContent -is [array]) {
+                            $manifestContent
+                        }
+                        elseif ($manifestContent.entries) {
+                            $manifestContent.entries
+                        }
+                        else {
+                            @()
+                        }
+                    
+                        # Find the manifest files
+                        $installerManifest = $manifestFiles | Where-Object { $_.name -like '*installer.yaml' } | Select-Object -First 1
+                        $defaultManifest = $manifestFiles | Where-Object { $_.name -like '*.yaml' -and $_.name -notlike '*installer.yaml' -and $_.name -notlike '*.locale.*.yaml' } | Select-Object -First 1
+                        $localeManifest = $manifestFiles | Where-Object { $_.name -like '*.locale.en-US.yaml' } | Select-Object -First 1
+                    
+                        # If installer manifest found, break the loop
+                        if ($installerManifest) {
+                            break
+                        }
+
+                        # No installer manifest found for this version
+                        if ($i -lt ($sortedVersions.Count - 1)) {
+                            Write-Verbose "No installer manifest found for version $($checkVersion.name), checking next version..."
+                        }
+                        else {
+                            Write-Verbose "No installer manifest found for any version of $($package.PackageId)"
+                        }
                     }
-                    
-                    # Find the manifest files
-                    $installerManifest = $manifestFiles | Where-Object { $_.name -like '*installer.yaml' } | Select-Object -First 1
-                    $defaultManifest = $manifestFiles | Where-Object { $_.name -like '*.yaml' -and $_.name -notlike '*installer.yaml' -and $_.name -notlike '*.locale.*.yaml' } | Select-Object -First 1
-                    $localeManifest = $manifestFiles | Where-Object { $_.name -like '*.locale.en-US.yaml' } | Select-Object -First 1
-                    
+
+                    # Ensure we have an installer manifest
                     if (-not $installerManifest) {
-                        Write-Verbose "No installer manifest found for $($package.PackageId) version $($latestVersion.name)"
                         continue
                     }
                     
