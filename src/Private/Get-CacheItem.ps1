@@ -11,7 +11,7 @@ function Get-CacheItem {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [string]$Key,
         
         [Parameter()]
@@ -19,14 +19,14 @@ function Get-CacheItem {
     )
     
     if (-not $script:CacheEnabled) {
-        return $null
+        return
     }
     
     $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "$Key.json"
     
     if (-not (Test-Path -Path $cacheFile)) {
         Write-Verbose "Cache miss: $Key (file not found)"
-        return $null
+        return
     }
     
     try {
@@ -36,7 +36,7 @@ function Get-CacheItem {
         if ($cacheData.Version -ne $script:CacheVersion) {
             Write-Verbose "Cache miss: $Key (version mismatch)"
             Remove-Item -Path $cacheFile -Force -ErrorAction SilentlyContinue
-            return $null
+            return
         }
         
         # Check expiration
@@ -44,7 +44,7 @@ function Get-CacheItem {
         if ($cacheAge.TotalMinutes -gt $ExpirationMinutes) {
             Write-Verbose "Cache miss: $Key (expired, age: $($cacheAge.TotalMinutes) minutes)"
             Remove-Item -Path $cacheFile -Force -ErrorAction SilentlyContinue
-            return $null
+            return
         }
         
         Write-Verbose "Cache hit: $Key (age: $([int]$cacheAge.TotalMinutes) minutes)"
@@ -52,6 +52,6 @@ function Get-CacheItem {
     } catch {
         Write-Verbose "Cache error reading $Key`: $_"
         Remove-Item -Path $cacheFile -Force -ErrorAction SilentlyContinue
-        return $null
+        return
     }
 }

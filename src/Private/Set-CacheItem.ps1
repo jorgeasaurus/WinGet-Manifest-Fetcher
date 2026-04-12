@@ -11,10 +11,10 @@ function Set-CacheItem {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [string]$Key,
         
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [object]$Data
     )
     

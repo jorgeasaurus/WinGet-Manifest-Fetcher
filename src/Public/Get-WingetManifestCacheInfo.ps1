@@ -19,29 +19,19 @@ function Get-WingetManifestCacheInfo {
         return
     }
     
-    if (-not (Test-Path -Path $script:CacheDirectory)) {
-        Write-Verbose "Cache directory does not exist"
-        return [PSCustomObject]@{
-            Enabled = $script:CacheEnabled
-            Directory = $script:CacheDirectory
-            ItemCount = 0
-            TotalSizeMB = 0
-            OldestItemAge = $null
-            NewestItemAge = $null
-            ExpirationMinutes = $script:CacheExpirationMinutes
-        }
+    $cacheFiles = @()
+    if (Test-Path -Path $script:CacheDirectory) {
+        $cacheFiles = Get-ChildItem -Path $script:CacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue
     }
-    
-    $cacheFiles = Get-ChildItem -Path $script:CacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue
-    
-    if ($cacheFiles.Count -eq 0) {
+
+    if (-not $cacheFiles -or $cacheFiles.Count -eq 0) {
         return [PSCustomObject]@{
-            Enabled = $script:CacheEnabled
-            Directory = $script:CacheDirectory
-            ItemCount = 0
-            TotalSizeMB = 0
-            OldestItemAge = $null
-            NewestItemAge = $null
+            Enabled           = $script:CacheEnabled
+            Directory         = $script:CacheDirectory
+            ItemCount         = 0
+            TotalSizeMB       = 0
+            OldestItemAge     = $null
+            NewestItemAge     = $null
             ExpirationMinutes = $script:CacheExpirationMinutes
         }
     }
@@ -49,13 +39,13 @@ function Get-WingetManifestCacheInfo {
     $totalSize = ($cacheFiles | Measure-Object -Property Length -Sum).Sum / 1MB
     $now = Get-Date
     
-    $ages = @()
+    $ages = [System.Collections.Generic.List[TimeSpan]]::new()
     foreach ($file in $cacheFiles) {
         try {
             $content = Get-Content -Path $file.FullName -Raw | ConvertFrom-Json
             if ($content.Timestamp) {
                 $age = $now - [DateTime]$content.Timestamp
-                $ages += $age
+                $ages.Add($age)
             }
         } catch {
             # Skip invalid cache files

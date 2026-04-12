@@ -19,6 +19,11 @@ BeforeAll {
         $script:CacheDirectory = $script:testCacheDirectory
         $script:CacheEnabled = $true
     }
+
+    # Mirror module-scope values into test scope for use outside InModuleScope
+    $script:testCacheDirectory = InModuleScope WinGetManifestFetcher { $script:testCacheDirectory }
+    $script:CacheVersion = InModuleScope WinGetManifestFetcher { $script:CacheVersion }
+    $script:CacheExpirationMinutes = InModuleScope WinGetManifestFetcher { $script:CacheExpirationMinutes }
 }
 
 AfterAll {
@@ -73,59 +78,65 @@ Describe "Get-CacheItem" {
     
     Context "When cache item exists" {
         It "Should return cached data for valid unexpired item" {
-            # Create test cache item
-            $testData = @{ Name = "Test"; Value = 123 }
-            $cacheEntry = @{
-                Version = $script:CacheVersion
-                Timestamp = (Get-Date).ToString('o')
-                Data = $testData
+            InModuleScope WinGetManifestFetcher {
+                # Create test cache item
+                $testData = @{ Name = "Test"; Value = 123 }
+                $cacheEntry = @{
+                    Version = $script:CacheVersion
+                    Timestamp = (Get-Date).ToString('o')
+                    Data = $testData
+                }
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "test_key.json"
+                $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
+                
+                # Retrieve cache item
+                $result = Get-CacheItem -Key "test_key"
+                $result | Should -Not -BeNullOrEmpty
+                $result.Name | Should -Be "Test"
+                $result.Value | Should -Be 123
             }
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "test_key.json"
-            $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
-            
-            # Retrieve cache item
-            $result = Get-CacheItem -Key "test_key"
-            $result | Should -Not -BeNullOrEmpty
-            $result.Name | Should -Be "Test"
-            $result.Value | Should -Be 123
         }
         
         It "Should return null for expired cache item" {
-            # Create expired cache item
-            $testData = @{ Name = "Test"; Value = 123 }
-            $cacheEntry = @{
-                Version = $script:CacheVersion
-                Timestamp = (Get-Date).AddMinutes(-120).ToString('o')  # 2 hours old
-                Data = $testData
+            InModuleScope WinGetManifestFetcher {
+                # Create expired cache item
+                $testData = @{ Name = "Test"; Value = 123 }
+                $cacheEntry = @{
+                    Version = $script:CacheVersion
+                    Timestamp = (Get-Date).AddMinutes(-120).ToString('o')  # 2 hours old
+                    Data = $testData
+                }
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "expired_key.json"
+                $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
+                
+                # Retrieve cache item (should be null due to expiration)
+                $result = Get-CacheItem -Key "expired_key" -ExpirationMinutes 60
+                $result | Should -BeNullOrEmpty
+                
+                # File should be deleted
+                Test-Path -Path $cacheFile | Should -BeFalse
             }
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "expired_key.json"
-            $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
-            
-            # Retrieve cache item (should be null due to expiration)
-            $result = Get-CacheItem -Key "expired_key" -ExpirationMinutes 60
-            $result | Should -BeNullOrEmpty
-            
-            # File should be deleted
-            Test-Path -Path $cacheFile | Should -BeFalse
         }
         
         It "Should return null for cache item with wrong version" {
-            # Create cache item with wrong version
-            $testData = @{ Name = "Test"; Value = 123 }
-            $cacheEntry = @{
-                Version = "0.1"  # Wrong version
-                Timestamp = (Get-Date).ToString('o')
-                Data = $testData
+            InModuleScope WinGetManifestFetcher {
+                # Create cache item with wrong version
+                $testData = @{ Name = "Test"; Value = 123 }
+                $cacheEntry = @{
+                    Version = "0.1"  # Wrong version
+                    Timestamp = (Get-Date).ToString('o')
+                    Data = $testData
+                }
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "wrong_version_key.json"
+                $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
+                
+                # Retrieve cache item
+                $result = Get-CacheItem -Key "wrong_version_key"
+                $result | Should -BeNullOrEmpty
+                
+                # File should be deleted
+                Test-Path -Path $cacheFile | Should -BeFalse
             }
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "wrong_version_key.json"
-            $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
-            
-            # Retrieve cache item
-            $result = Get-CacheItem -Key "wrong_version_key"
-            $result | Should -BeNullOrEmpty
-            
-            # File should be deleted
-            Test-Path -Path $cacheFile | Should -BeFalse
         }
     }
 }
@@ -133,51 +144,59 @@ Describe "Get-CacheItem" {
 Describe "Set-CacheItem" {
     BeforeEach {
         # Clear test cache
-        Get-ChildItem -Path $script:testCacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue | Remove-Item -Force
+        InModuleScope WinGetManifestFetcher {
+            Get-ChildItem -Path $script:CacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue | Remove-Item -Force
+        }
     }
     
     Context "When cache is disabled" {
         It "Should not create cache file when cache is disabled" {
-            $script:CacheEnabled = $false
-            $testData = @{ Name = "Test"; Value = 123 }
-            Set-CacheItem -Key "test_key" -Data $testData
-            
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "test_key.json"
-            Test-Path -Path $cacheFile | Should -BeFalse
-            
-            $script:CacheEnabled = $true
+            InModuleScope WinGetManifestFetcher {
+                $script:CacheEnabled = $false
+                $testData = @{ Name = "Test"; Value = 123 }
+                Set-CacheItem -Key "test_key" -Data $testData
+                
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "test_key.json"
+                Test-Path -Path $cacheFile | Should -BeFalse
+                
+                $script:CacheEnabled = $true
+            }
         }
     }
     
     Context "When cache is enabled" {
         It "Should create cache file with correct structure" {
-            $testData = @{ Name = "Test"; Value = 123 }
-            Set-CacheItem -Key "test_key" -Data $testData
-            
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "test_key.json"
-            Test-Path -Path $cacheFile | Should -BeTrue
-            
-            $content = Get-Content -Path $cacheFile -Raw | ConvertFrom-Json
-            $content.Version | Should -Be $script:CacheVersion
-            $content.Timestamp | Should -Not -BeNullOrEmpty
-            $content.Data.Name | Should -Be "Test"
-            $content.Data.Value | Should -Be 123
+            InModuleScope WinGetManifestFetcher {
+                $testData = @{ Name = "Test"; Value = 123 }
+                Set-CacheItem -Key "test_key" -Data $testData
+                
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "test_key.json"
+                Test-Path -Path $cacheFile | Should -BeTrue
+                
+                $content = Get-Content -Path $cacheFile -Raw | ConvertFrom-Json
+                $content.Version | Should -Be $script:CacheVersion
+                $content.Timestamp | Should -Not -BeNullOrEmpty
+                $content.Data.Name | Should -Be "Test"
+                $content.Data.Value | Should -Be 123
+            }
         }
         
         It "Should overwrite existing cache file" {
-            # Create initial cache item
-            $testData1 = @{ Name = "Test1"; Value = 123 }
-            Set-CacheItem -Key "test_key" -Data $testData1
-            
-            # Overwrite with new data
-            $testData2 = @{ Name = "Test2"; Value = 456 }
-            Set-CacheItem -Key "test_key" -Data $testData2
-            
-            # Verify new data
-            $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "test_key.json"
-            $content = Get-Content -Path $cacheFile -Raw | ConvertFrom-Json
-            $content.Data.Name | Should -Be "Test2"
-            $content.Data.Value | Should -Be 456
+            InModuleScope WinGetManifestFetcher {
+                # Create initial cache item
+                $testData1 = @{ Name = "Test1"; Value = 123 }
+                Set-CacheItem -Key "test_key" -Data $testData1
+                
+                # Overwrite with new data
+                $testData2 = @{ Name = "Test2"; Value = 456 }
+                Set-CacheItem -Key "test_key" -Data $testData2
+                
+                # Verify new data
+                $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "test_key.json"
+                $content = Get-Content -Path $cacheFile -Raw | ConvertFrom-Json
+                $content.Data.Name | Should -Be "Test2"
+                $content.Data.Value | Should -Be 456
+            }
         }
     }
 }
@@ -185,9 +204,11 @@ Describe "Set-CacheItem" {
 Describe "Clear-WingetManifestCache" {
     BeforeEach {
         # Create some test cache files
-        1..5 | ForEach-Object {
-            $testData = @{ Item = $_; Value = "Test$_" }
-            Set-CacheItem -Key "test_key_$_" -Data $testData
+        InModuleScope WinGetManifestFetcher {
+            1..5 | ForEach-Object {
+                $testData = @{ Item = $_; Value = "Test$_" }
+                Set-CacheItem -Key "test_key_$_" -Data $testData
+            }
         }
     }
     
@@ -240,13 +261,17 @@ Describe "Get-WingetManifestCacheInfo" {
     Context "When cache has items" {
         It "Should return correct cache statistics" {
             # Create cache items with different ages
-            $testData1 = @{ Name = "Test1"; Value = "Large" * 1000 }
-            Set-CacheItem -Key "test_key_1" -Data $testData1
+            InModuleScope WinGetManifestFetcher {
+                $testData1 = @{ Name = "Test1"; Value = "Large" * 1000 }
+                Set-CacheItem -Key "test_key_1" -Data $testData1
+            }
             
             Start-Sleep -Seconds 2
             
-            $testData2 = @{ Name = "Test2"; Value = "Small" }
-            Set-CacheItem -Key "test_key_2" -Data $testData2
+            InModuleScope WinGetManifestFetcher {
+                $testData2 = @{ Name = "Test2"; Value = "Small" }
+                Set-CacheItem -Key "test_key_2" -Data $testData2
+            }
             
             $info = Get-WingetManifestCacheInfo
             
@@ -261,12 +286,12 @@ Describe "Get-WingetManifestCacheInfo" {
 Describe "Set-WingetManifestCacheEnabled" {
     It "Should disable cache when set to false" {
         Set-WingetManifestCacheEnabled -Enabled $false
-        $script:CacheEnabled | Should -BeFalse
+        InModuleScope WinGetManifestFetcher { $script:CacheEnabled } | Should -BeFalse
     }
     
     It "Should enable cache when set to true" {
         Set-WingetManifestCacheEnabled -Enabled $true
-        $script:CacheEnabled | Should -BeTrue
+        InModuleScope WinGetManifestFetcher { $script:CacheEnabled } | Should -BeTrue
     }
     
     It "Should create cache directory when enabling if it doesn't exist" {

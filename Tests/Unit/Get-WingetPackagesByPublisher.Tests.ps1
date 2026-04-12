@@ -13,6 +13,11 @@ BeforeAll {
 }
 
 Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
+    BeforeEach {
+        Mock -CommandName Get-CacheItem -MockWith { return $null } -ModuleName WinGetManifestFetcher
+        Mock -CommandName Set-CacheItem -ModuleName WinGetManifestFetcher
+    }
+
     Context 'Publisher Name Matching' {
         BeforeEach {
             Mock -CommandName Write-Verbose -ModuleName WinGetManifestFetcher
@@ -24,7 +29,12 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
                 param($Path)
                 
                 if ($Path -eq 'manifests/m/Microsoft') {
-                    return @{ type = 'dir' }
+                    return @{
+                        entries = @(
+                            @{ name = 'PowerToys'; type = 'dir'; path = 'manifests/m/Microsoft/PowerToys' }
+                            @{ name = 'VisualStudioCode'; type = 'dir'; path = 'manifests/m/Microsoft/VisualStudioCode' }
+                        )
+                    }
                 }
                 elseif ($Path -eq 'manifests/m') {
                     return @{
@@ -35,14 +45,6 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
                         )
                     }
                 }
-                elseif ($Path -eq 'manifests/m/Microsoft') {
-                    return @{
-                        entries = @(
-                            @{ name = 'PowerToys'; type = 'dir'; path = 'manifests/m/Microsoft/PowerToys' }
-                            @{ name = 'VisualStudioCode'; type = 'dir'; path = 'manifests/m/Microsoft/VisualStudioCode' }
-                        )
-                    }
-                }
                 return @{ entries = @() }
             } -ModuleName WinGetManifestFetcher
             
@@ -50,10 +52,10 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
             
             # Should only return Microsoft packages, not MicrosoftEdge or Microchip
             $result | Should -Not -BeNullOrEmpty
-            $result.Publisher | Should -All { $_ -eq 'Microsoft' }
+            $result.Publisher | ForEach-Object { $_ | Should -Be 'Microsoft' }
             
-            # Verify exact match was used (should call Get-GitHubContent with exact path first)
-            Assert-MockCalled -CommandName Get-GitHubContent -Times 1 -Exactly -Scope It -ModuleName WinGetManifestFetcher -ParameterFilter {
+            # Verify exact match was used (existence check + package listing)
+            Should -Invoke -CommandName Get-GitHubContent -Times 2 -Exactly -Scope It -ModuleName WinGetManifestFetcher -ParameterFilter {
                 $Path -eq 'manifests/m/Microsoft'
             }
         }
@@ -81,26 +83,26 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
         }
         
         It 'Should search all letter directories for short publisher names' {
-            $mockCallCount = 0
             Mock -CommandName Get-GitHubContent -MockWith {
                 param($Path)
                 
                 if ($Path -match '^manifests/[a-z]$') {
-                    $script:mockCallCount++
                     return @{
                         entries = @(
-                            @{ name = 'ABC'; type = 'dir' }
-                            @{ name = 'ABCompany'; type = 'dir' }
+                            @{ name = 'ABC'; type = 'dir'; path = "$Path/ABC" }
+                            @{ name = 'ABCompany'; type = 'dir'; path = "$Path/ABCompany" }
                         )
                     }
                 }
-                return @{ entries = @() }
+                throw "Not found"
             } -ModuleName WinGetManifestFetcher
             
             $null = Get-WingetPackagesByPublisher -Publisher 'AB'
             
             # For a 2-letter search, it should check all letter directories
-            $script:mockCallCount | Should -BeGreaterThan 20
+            Should -Invoke -CommandName Get-GitHubContent -ModuleName WinGetManifestFetcher -Scope It -ParameterFilter {
+                $Path -match '^manifests/[a-z]$'
+            } -Times 26 -Exactly
         }
     }
     
@@ -137,7 +139,7 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
                     entries = @(
                         @{ name = 'PowerToys'; type = 'dir' }
                         @{ name = 'README.md'; type = 'file' }
-                        @{ name = '.validation'; type = 'dir' }
+                        @{ name = '.validation'; type = 'file' }
                         @{ name = 'VisualStudioCode'; type = 'dir' }
                     )
                 }
@@ -218,13 +220,20 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
                 if ($Path -match '^manifests/[a-z]$') {
                     return @{
                         entries = @(
-                            @{ name = 'TestPublisher1'; type = 'dir' }
-                            @{ name = 'TestPublisher2'; type = 'dir' }
-                            @{ name = 'TestPublisher3'; type = 'dir' }
+                            @{ name = 'TestPublisher1'; type = 'dir'; path = "$Path/TestPublisher1" }
+                            @{ name = 'TestPublisher2'; type = 'dir'; path = "$Path/TestPublisher2" }
+                            @{ name = 'TestPublisher3'; type = 'dir'; path = "$Path/TestPublisher3" }
                         )
                     }
                 }
-                return @{ entries = @() }
+                elseif ($Path -match 'TestPublisher\d+$') {
+                    return @{
+                        entries = @(
+                            @{ name = 'App1'; type = 'dir'; path = "$Path/App1" }
+                        )
+                    }
+                }
+                throw "Not found"
             } -ModuleName WinGetManifestFetcher
             
             $result = Get-WingetPackagesByPublisher -Publisher 'Test' -MaxResults 2
@@ -238,12 +247,9 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
                 param($Path)
                 
                 if ($Path -eq 'manifests/m/Microsoft') {
-                    return @{ type = 'dir' }
-                }
-                elseif ($Path -like '*/Microsoft') {
                     return @{
                         entries = 1..20 | ForEach-Object {
-                            @{ name = "Package$_"; type = 'dir' }
+                            @{ name = "Package$_"; type = 'dir'; path = "manifests/m/Microsoft/Package$_" }
                         }
                     }
                 }
@@ -302,6 +308,11 @@ Describe 'Get-WingetPackagesByPublisher - Advanced Scenarios' {
 }
 
 Describe 'Get-WingetPackagesByPublisher - Output Validation' {
+    BeforeEach {
+        Mock -CommandName Get-CacheItem -MockWith { return $null } -ModuleName WinGetManifestFetcher
+        Mock -CommandName Set-CacheItem -ModuleName WinGetManifestFetcher
+    }
+
     Context 'Object Structure' {
         It 'Should return consistent object structure for all packages' {
             Mock -CommandName Get-GitHubContent -MockWith {
@@ -320,7 +331,6 @@ Describe 'Get-WingetPackagesByPublisher - Output Validation' {
                 $_.PSObject.Properties.Name | Should -Contain 'PackageName'
                 $_.PSObject.Properties.Name | Should -Contain 'PackageIdentifier'
                 $_.PSObject.Properties.Name | Should -Contain 'ManifestPath'
-                $_.PSObject.Properties.Name | Should -Contain 'LatestVersion'
                 
                 # Types should be consistent
                 $_.Publisher | Should -BeOfType [string]

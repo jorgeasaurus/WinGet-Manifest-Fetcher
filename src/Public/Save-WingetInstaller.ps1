@@ -43,8 +43,9 @@ function Save-WingetInstaller {
         Downloads the EXE installer for Git and returns the file information.
     #>
     [CmdletBinding(SupportsShouldProcess)]
+    [OutputType([System.IO.FileInfo])]
     param(
-        [Parameter(Mandatory = $true, Position = 0)]
+        [Parameter(Mandatory, Position = 0)]
         [ValidateNotNullOrEmpty()]
         [string]$App,
         
@@ -72,7 +73,7 @@ function Save-WingetInstaller {
         # Ensure the target directory exists
         if (-not (Test-Path -Path $Path)) {
             if ($PSCmdlet.ShouldProcess($Path, "Create directory")) {
-                New-Item -ItemType Directory -Path $Path -Force | Out-Null
+                $null = New-Item -ItemType Directory -Path $Path -Force
             }
         }
         
@@ -88,23 +89,38 @@ function Save-WingetInstaller {
             $package = Get-LatestWingetVersion -App $App -ErrorAction Stop
             
             if (-not $package) {
-                Write-Error "Package '$App' not found"
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Package '$App' not found"),
+                    'PackageNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $App
+                ))
                 return
             }
             
             if (-not $package.Installers -or $package.Installers.Count -eq 0) {
-                Write-Error "No installers found for package '$App'"
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No installers found for package '$App'"),
+                    'NoInstallersFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $App
+                ))
                 return
             }
             
             # Filter installers based on criteria
-            $availableInstallers = $package.Installers
+            $availableInstallers = @($package.Installers)
             
             # Filter by architecture if specified
             if ($Architecture) {
                 $availableInstallers = $availableInstallers | Where-Object { $_.Architecture -eq $Architecture }
                 if (-not $availableInstallers) {
-                    Write-Error "No installer found for architecture '$Architecture'"
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("No installer found for architecture '$Architecture'"),
+                        'ArchitectureNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Architecture
+                    ))
                     return
                 }
             }
@@ -113,7 +129,12 @@ function Save-WingetInstaller {
             if ($InstallerType) {
                 $availableInstallers = $availableInstallers | Where-Object { $_.InstallerType -eq $InstallerType }
                 if (-not $availableInstallers) {
-                    Write-Error "No installer found for type '$InstallerType'"
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("No installer found for type '$InstallerType'"),
+                        'InstallerTypeNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $InstallerType
+                    ))
                     return
                 }
             }
@@ -134,7 +155,12 @@ function Save-WingetInstaller {
             }
             
             if (-not $installer) {
-                Write-Error "No suitable installer found"
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("No suitable installer found"),
+                    'NoSuitableInstaller',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $App
+                ))
                 return
             }
             
@@ -158,13 +184,18 @@ function Save-WingetInstaller {
             
             # Check if file already exists
             if ((Test-Path -Path $outputPath) -and -not $Force) {
-                Write-Error "File already exists: $outputPath. Use -Force to overwrite."
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.IO.IOException]::new("File already exists: $outputPath. Use -Force to overwrite."),
+                    'FileExists',
+                    [System.Management.Automation.ErrorCategory]::ResourceExists,
+                    $outputPath
+                ))
                 return
             }
             
             # Download the file
             if ($PSCmdlet.ShouldProcess($installer.InstallerUrl, "Download to $outputPath")) {
-                Write-Host "Downloading $($package.PackageName) $($package.PackageVersion) ($($installer.Architecture))..." -ForegroundColor Cyan
+                Write-Verbose "Downloading $($package.PackageName) $($package.PackageVersion) ($($installer.Architecture))..."
                 Write-Verbose "URL: $($installer.InstallerUrl)"
                 Write-Verbose "Destination: $outputPath"
                 
@@ -173,30 +204,37 @@ function Save-WingetInstaller {
                     if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
                         Start-BitsTransfer -Source $installer.InstallerUrl -Destination $outputPath -Description "Downloading $($package.PackageName)"
                     } else {
-                        $webClient = New-Object System.Net.WebClient
-                        $webClient.DownloadFile($installer.InstallerUrl, $outputPath)
+                        Invoke-WebRequest -Uri $installer.InstallerUrl -OutFile $outputPath -UseBasicParsing
                     }
                     
-                    Write-Host "Download complete: $outputPath" -ForegroundColor Green
+                    Write-Verbose "Download complete: $outputPath"
                 } catch {
-                    Write-Error "Failed to download installer: $_"
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        $_.Exception,
+                        'DownloadFailed',
+                        [System.Management.Automation.ErrorCategory]::ConnectionError,
+                        $installer.InstallerUrl
+                    ))
                     return
                 }
                 
                 # Verify hash if not skipped
                 if (-not $SkipHashValidation -and $installer.InstallerSha256) {
-                    Write-Host "Verifying hash..." -ForegroundColor Cyan
+                    Write-Verbose "Verifying hash..."
                     Write-Verbose "Expected SHA256: $($installer.InstallerSha256)"
                     
                     $actualHash = (Get-FileHash -Path $outputPath -Algorithm SHA256).Hash
                     Write-Verbose "Actual SHA256: $actualHash"
                     
                     if ($actualHash -eq $installer.InstallerSha256) {
-                        Write-Host "Hash verification successful" -ForegroundColor Green
+                        Write-Verbose "Hash verification successful"
                     } else {
-                        Write-Error "Hash verification failed! The downloaded file may be corrupted or tampered with."
-                        Write-Error "Expected: $($installer.InstallerSha256)"
-                        Write-Error "Actual:   $actualHash"
+                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Hash verification failed. Expected: $($installer.InstallerSha256), Actual: $actualHash"),
+                            'HashMismatch',
+                            [System.Management.Automation.ErrorCategory]::SecurityError,
+                            $outputPath
+                        ))
                         
                         # Remove the potentially corrupted file
                         Remove-Item -Path $outputPath -Force
@@ -218,7 +256,12 @@ function Save-WingetInstaller {
                 }
             }
         } catch {
-            Write-Error "Error downloading installer: $_"
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                $_.Exception,
+                'InstallerDownloadError',
+                [System.Management.Automation.ErrorCategory]::NotSpecified,
+                $App
+            ))
         }
     }
 }

@@ -42,7 +42,7 @@ function Get-WingetPackagesByPublisher {
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
     param(
-        [Parameter(Mandatory = $true, Position = 0)]
+        [Parameter(Mandatory, Position = 0)]
         [ValidateNotNullOrEmpty()]
         [string]$Publisher,
         
@@ -53,12 +53,9 @@ function Get-WingetPackagesByPublisher {
         [int]$MaxResults = 0
     )
     
-    begin {
-        Write-Verbose "Searching for packages by publisher: $Publisher"
-        $packages = @()
-    }
-    
     process {
+        Write-Verbose "Searching for packages by publisher: $Publisher"
+        $packages = [System.Collections.Generic.List[PSCustomObject]]::new()
         try {
             # Generate cache key for publisher search
             $cacheKey = "publisher_$($Publisher -replace '[^\w\-\.]', '_')_$(if($IncludeVersions){'withver'}else{'nover'})_$MaxResults"
@@ -72,9 +69,9 @@ function Get-WingetPackagesByPublisher {
             
             # First, try exact publisher match
             $firstLetter = $Publisher.Substring(0, 1).ToLower()
-            $publisherPath = "$ManifestPath/$firstLetter/$Publisher"
+            $publisherPath = "$script:ManifestPath/$firstLetter/$Publisher"
             
-            $publishersToCheck = @()
+            $publishersToCheck = [System.Collections.Generic.List[hashtable]]::new()
             
             try {
                 # Check if exact publisher exists
@@ -82,10 +79,10 @@ function Get-WingetPackagesByPublisher {
                 
                 if ($content) {
                     Write-Verbose "Found exact publisher match: $Publisher"
-                    $publishersToCheck += @{
+                    $publishersToCheck.Add(@{
                         Name = $Publisher
                         Path = $publisherPath
-                    }
+                    })
                 }
             } catch {
                 Write-Verbose "No exact match for publisher '$Publisher', searching for partial matches..."
@@ -103,7 +100,7 @@ function Get-WingetPackagesByPublisher {
                 
                 foreach ($letter in $searchLetters) {
                     try {
-                        $letterPath = "$ManifestPath/$letter"
+                        $letterPath = "$script:ManifestPath/$letter"
                         $publisherDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $letterPath -ErrorAction SilentlyContinue
                         
                         if ($publisherDirs) {
@@ -112,10 +109,10 @@ function Get-WingetPackagesByPublisher {
                             foreach ($dir in $dirList | Where-Object { $_.type -eq 'dir' }) {
                                 if ($dir.name -like "*$Publisher*") {
                                     Write-Verbose "Found publisher match: $($dir.name)"
-                                    $publishersToCheck += @{
+                                    $publishersToCheck.Add(@{
                                         Name = $dir.name
                                         Path = $dir.path
-                                    }
+                                    })
                                 }
                             }
                         }
@@ -171,7 +168,7 @@ function Get-WingetPackagesByPublisher {
                         
                         $packageInfo = [PSCustomObject]$packageProps
                         
-                        $packages += $packageInfo
+                        $packages.Add($packageInfo)
                         
                         # Check if we've reached the maximum results
                         if ($MaxResults -gt 0 -and $packages.Count -ge $MaxResults) {
@@ -189,8 +186,17 @@ function Get-WingetPackagesByPublisher {
                 }
             }
             
+            if ($packages.Count -gt 0) {
+                Set-CacheItem -Key $cacheKey -Data $packages
+            }
+            
         } catch {
-            Write-Error "Error searching for publisher packages: $_"
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                $_.Exception,
+                'PublisherSearchError',
+                [System.Management.Automation.ErrorCategory]::NotSpecified,
+                $Publisher
+            ))
             throw
         }
     }
@@ -200,10 +206,6 @@ function Get-WingetPackagesByPublisher {
             Write-Warning "No packages found for publisher matching '$Publisher'"
         } else {
             Write-Verbose "Found $($packages.Count) package(s)"
-            
-            # Cache the result before returning
-            Set-CacheItem -Key $cacheKey -Data $packages
-            
             return $packages
         }
     }

@@ -18,6 +18,7 @@ function Clear-WingetManifestCache {
         Clears the cache without prompting.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact='High')]
+    [OutputType([void])]
     param(
         [Parameter()]
         [switch]$Force
@@ -36,16 +37,21 @@ function Clear-WingetManifestCache {
     $cacheFiles = Get-ChildItem -Path $script:CacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue
     
     if ($cacheFiles.Count -eq 0) {
-        Write-Host "Cache is already empty"
+        Write-Verbose "Cache is already empty"
         return
     }
     
     if ($Force -or $PSCmdlet.ShouldProcess("$($cacheFiles.Count) cached items", "Clear")) {
         try {
             Remove-Item -Path (Join-Path -Path $script:CacheDirectory -ChildPath "*.json") -Force
-            Write-Host "Cleared $($cacheFiles.Count) cached items"
+            Write-Verbose "Cleared $($cacheFiles.Count) cached items"
         } catch {
-            Write-Error "Failed to clear cache: $_"
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                $_.Exception,
+                'CacheClearFailed',
+                [System.Management.Automation.ErrorCategory]::WriteError,
+                $script:CacheDirectory
+            ))
         }
     }
 }

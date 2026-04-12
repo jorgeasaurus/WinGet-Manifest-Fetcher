@@ -8,7 +8,7 @@
     installer information from WinGet manifests without requiring the WinGet client to be installed.
 .NOTES
     Author: WinGet Manifest Fetcher Contributors
-    Version: 1.4.0
+    Version: 1.5.0
 #>
 
 # Import required modules
@@ -31,14 +31,6 @@ foreach ($module in $requiredModules) {
 $script:WinGetRepoOwner = 'microsoft'
 $script:WinGetRepoName = 'winget-pkgs'
 $script:ManifestPath = 'manifests'
-
-# Verify variables are set
-if (-not $script:WinGetRepoOwner -or -not $script:WinGetRepoName) {
-    Write-Warning "Module variables not properly initialized. Setting defaults."
-    $script:WinGetRepoOwner = 'microsoft'
-    $script:WinGetRepoName = 'winget-pkgs'
-    $script:ManifestPath = 'manifests'
-}
 
 # Cache configuration
 $script:CacheEnabled = $true
@@ -65,6 +57,7 @@ Set-GitHubConfiguration -DisableTelemetry -SessionOnly
 
 # Configure GitHub authentication if token is available
 if ($env:GITHUB_TOKEN) {
+    # Environment variable is already in-memory plaintext; SecureString conversion required by PSCredential
     $secureToken = ConvertTo-SecureString -String $env:GITHUB_TOKEN -AsPlainText -Force
     $credential = New-Object System.Management.Automation.PSCredential("token", $secureToken)
     Set-GitHubAuthentication -Credential $credential -SessionOnly
@@ -76,7 +69,7 @@ if ($env:GITHUB_TOKEN) {
 # Initialize cache directory
 if ($script:CacheEnabled -and -not (Test-Path -Path $script:CacheDirectory)) {
     try {
-        New-Item -ItemType Directory -Path $script:CacheDirectory -Force | Out-Null
+        $null = New-Item -ItemType Directory -Path $script:CacheDirectory -Force
         Write-Verbose "Created cache directory: $script:CacheDirectory"
     } catch {
         Write-Warning "Failed to create cache directory: $_"

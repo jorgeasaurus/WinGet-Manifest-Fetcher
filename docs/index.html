@@ -120,6 +120,7 @@
             padding: 8px 16px;
             border-radius: 20px;
             font-size: 0.9rem;
+            -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.3);
         }
@@ -173,6 +174,7 @@
             position: sticky;
             top: 0;
             z-index: 100;
+            -webkit-backdrop-filter: blur(10px);
             backdrop-filter: blur(10px);
             background: rgba(255, 255, 255, 0.95);
         }
@@ -454,7 +456,7 @@
                         <span>📥</span> Get Started
                     </a>
                     <a href="https://github.com/jorgeasaurus/WinGet-Manifest-Fetcher" class="btn btn-secondary"
-                        target="_blank">
+                        target="_blank" rel="noopener">
                         <span>📂</span> View on GitHub
                     </a>
                 </div>
@@ -711,7 +713,7 @@ $file | Format-List Name, Length, PackageVersion, Architecture, HashVerified</pr
 
                 <div style="text-align: center; margin-top: 40px;">
                     <a href="https://github.com/jorgeasaurus/WinGet-Manifest-Fetcher#readme" class="btn btn-primary"
-                        target="_blank">
+                        target="_blank" rel="noopener">
                         <span>📚</span> View Full Documentation
                     </a>
                 </div>

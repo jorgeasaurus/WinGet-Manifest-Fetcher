@@ -50,3 +50,4 @@ Tests/run-unit-tests.ps1
 blog-post-*.md
 Examples/AllLatestVersionsReport.ps1
 Examples/AllLatestVersionReport-Parallel.ps1
+WinGetManifestFetcher-review.md

@@ -12,7 +12,7 @@
 RootModule = 'WinGetManifestFetcher.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.4.0'
+ModuleVersion = '1.5.0'
 
 # Supported PSEditions
 # CompatiblePSEditions = @()
@@ -129,6 +129,18 @@ PrivateData = @{
 
         # ReleaseNotes of this module
         ReleaseNotes = @'
+## Version 1.5.0
+- Replaced all Write-Error with structured ErrorRecord objects ($PSCmdlet.WriteError) for enterprise pipeline compatibility
+- Replaced all Write-Host in library functions with Write-Verbose for proper stream discipline
+- Replaced += array growth with System.Collections.Generic.List[T] for O(n) performance in hot paths
+- Fixed $ManifestPath scope references to use $script: prefix consistently
+- Removed dead variable guard code in module loader
+- Extracted 16x locale/default manifest fallback into metadata field loop (DRY)
+- Replaced deprecated System.Net.WebClient with Invoke-WebRequest in Save-WingetInstaller
+- Consolidated duplicate zero-state cache info blocks in Get-WingetManifestCacheInfo
+- Added [OutputType()] attributes to all public functions
+- Fixed VS Code tasks.json (broken CI task, wrong module name reference)
+
 ## Version 1.4.0
 - Enhanced version sorting to handle complex formats (e.g., Spotify's git hash suffixes)
 - Added comprehensive test suite for popular applications

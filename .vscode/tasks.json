@@ -76,14 +76,11 @@
         },
         {
             "label": "Build: Full CI (Analyze + Test + Build)",
-            "type": "shell",
-            "command": "pwsh",
-            "args": [
-                "-NoProfile",
-                "-File",
-                "${workspaceFolder}/build.ps1",
-                "-Task",
-                "CI"
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Build: Analyze (PSScriptAnalyzer)",
+                "Build: Test (Pester)",
+                "Build: Build Module"
             ],
             "group": "build",
             "presentation": {
@@ -98,8 +95,10 @@
             "command": "pwsh",
             "args": [
                 "-NoProfile",
-                "-Command",
-                "Import-Module InvokeBuild -Force; Invoke-Build -File ./build.ps1 -Task Clean"
+                "-File",
+                "${workspaceFolder}/build.ps1",
+                "-Task",
+                "Clean"
             ],
             "group": "build",
             "presentation": {
@@ -115,7 +114,7 @@
             "args": [
                 "-NoProfile",
                 "-Command",
-                "Import-Module \"${workspaceFolder}/WingetIntunePublisher.psd1\" -Force -Verbose"
+                "Import-Module \"${workspaceFolder}/src/WinGetManifestFetcher.psd1\" -Force -Verbose"
             ],
             "group": "none",
             "presentation": {
@@ -125,15 +124,17 @@
             "problemMatcher": []
         },
         {
-            "label": "Module: Get ReleaseNotes",
+            "label": "Build: Publish",
             "type": "shell",
             "command": "pwsh",
             "args": [
                 "-NoProfile",
-                "-Command",
-                "Import-Module InvokeBuild -Force; Invoke-Build -File ./build.ps1 -Task GetReleaseNotes"
+                "-File",
+                "${workspaceFolder}/build.ps1",
+                "-Task",
+                "Publish"
             ],
-            "group": "none",
+            "group": "build",
             "presentation": {
                 "reveal": "always",
                 "panel": "shared"

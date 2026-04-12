@@ -15,8 +15,9 @@ function Set-WingetManifestCacheEnabled {
         Enables caching.
     #>
     [CmdletBinding()]
+    [OutputType([void])]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [bool]$Enabled
     )
     
@@ -26,15 +27,20 @@ function Set-WingetManifestCacheEnabled {
         if (-not (Test-Path -Path $script:CacheDirectory)) {
             try {
                 New-Item -ItemType Directory -Path $script:CacheDirectory -Force | Out-Null
-                Write-Host "Cache enabled at: $script:CacheDirectory"
+                Write-Verbose "Cache enabled at: $script:CacheDirectory"
             } catch {
-                Write-Error "Failed to create cache directory: $_"
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    $_.Exception,
+                    'CacheDirectoryCreateFailed',
+                    [System.Management.Automation.ErrorCategory]::WriteError,
+                    $script:CacheDirectory
+                ))
                 $script:CacheEnabled = $false
             }
         } else {
-            Write-Host "Cache enabled"
+            Write-Verbose "Cache enabled"
         }
     } else {
-        Write-Host "Cache disabled"
+        Write-Verbose "Cache disabled"
     }
 }

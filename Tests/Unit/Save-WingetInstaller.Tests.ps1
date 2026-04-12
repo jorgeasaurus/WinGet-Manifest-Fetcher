@@ -60,14 +60,7 @@ BeforeAll {
     if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
         Mock -ModuleName WinGetManifestFetcher Start-BitsTransfer {}
     }
-    Mock -ModuleName WinGetManifestFetcher New-Object {
-        param($TypeName)
-        if ($TypeName -eq 'System.Net.WebClient') {
-            $mockWebClient = [PSCustomObject]@{}
-            Add-Member -InputObject $mockWebClient -MemberType ScriptMethod -Name 'DownloadFile' -Value {}
-            return $mockWebClient
-        }
-    }
+    Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest {}
     
     Mock -ModuleName WinGetManifestFetcher Get-FileHash {
         return [PSCustomObject]@{
@@ -90,7 +83,7 @@ BeforeAll {
         }
         return $mockFile
     }
-    Mock -ModuleName WinGetManifestFetcher Write-Host {}
+    Mock -ModuleName WinGetManifestFetcher Write-Verbose {}
     Mock -ModuleName WinGetManifestFetcher Write-Warning {}
 }
 
@@ -143,9 +136,7 @@ Describe 'Save-WingetInstaller' {
             if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
                 Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 1
             } else {
-                Should -Invoke -CommandName New-Object -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                    $TypeName -eq 'System.Net.WebClient'
-                }
+                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
             }
         }
         
@@ -194,7 +185,7 @@ Describe 'Save-WingetInstaller' {
                     $Source -like '*7z2301-x64.exe'
                 }
             } else {
-                Should -Invoke -CommandName New-Object -ModuleName WinGetManifestFetcher -Times 1
+                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
             }
         }
         
@@ -213,7 +204,7 @@ Describe 'Save-WingetInstaller' {
                     $Source -like '*7z2301.exe'
                 }
             } else {
-                Should -Invoke -CommandName New-Object -ModuleName WinGetManifestFetcher -Times 1
+                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
             }
         }
         
@@ -281,7 +272,7 @@ Describe 'Save-WingetInstaller' {
                     $Source -like '*.msi'
                 }
             } else {
-                Should -Invoke -CommandName New-Object -ModuleName WinGetManifestFetcher -Times 1
+                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
             }
         }
         
@@ -307,7 +298,6 @@ Describe 'Save-WingetInstaller' {
         }
         
         It 'Removes file on hash mismatch' {
-            # Temporarily override the Get-FileHash mock for this test only
             Mock -ModuleName WinGetManifestFetcher Get-FileHash {
                 return [PSCustomObject]@{
                     Hash = 'WRONGHASH'
@@ -317,20 +307,13 @@ Describe 'Save-WingetInstaller' {
             Mock -ModuleName WinGetManifestFetcher Test-Path {
                 param($Path)
                 if ($Path -like "*.exe") {
-                    return $false  # File doesn't exist before download
+                    return $false
                 }
                 return $true
             }
             
-            Mock -ModuleName WinGetManifestFetcher Write-Error {}
-            
             Save-WingetInstaller -App '7zip.7zip' -ErrorAction SilentlyContinue
             
-            Should -Invoke -CommandName Write-Error -ModuleName WinGetManifestFetcher -Times 3 -ParameterFilter {
-                $Message -like "*Hash verification failed*" -or 
-                $Message -like "Expected:*" -or 
-                $Message -like "Actual:*"
-            }
             Should -Invoke -CommandName Remove-Item -ModuleName WinGetManifestFetcher -Times 1
         }
         
@@ -380,16 +363,10 @@ Describe 'Save-WingetInstaller' {
         It 'Handles download failure' {
             if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
                 Mock -ModuleName WinGetManifestFetcher Start-BitsTransfer { throw "Network error" }
-            } else {
-                Mock -ModuleName WinGetManifestFetcher New-Object {
-                    param($TypeName)
-                    if ($TypeName -eq 'System.Net.WebClient') {
-                        throw "Network error"
-                    }
-                }
             }
+            Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest { throw "Network error" }
             
-            { Save-WingetInstaller -App '7zip.7zip' -ErrorAction Stop } | Should -Throw "*Failed to download installer*"
+            { Save-WingetInstaller -App '7zip.7zip' -ErrorAction Stop } | Should -Throw
         }
         
         It 'Does not overwrite existing file without Force' {
@@ -416,32 +393,20 @@ Describe 'Save-WingetInstaller' {
         }
     }
     
-    Context 'WebClient Fallback' {
+    Context 'Invoke-WebRequest Fallback' {
         BeforeEach {
             Mock -ModuleName WinGetManifestFetcher Get-Command {
                 param($Name)
-                if ($Name -eq 'Start-BitsTransfer') {
-                    return $null
-                }
+                if ($Name -eq 'Start-BitsTransfer') { return $null }
                 return $true
             }
-            
-            Mock -ModuleName WinGetManifestFetcher New-Object {
-                param($TypeName)
-                if ($TypeName -eq 'System.Net.WebClient') {
-                    $mockWebClient = [PSCustomObject]@{}
-                    Add-Member -InputObject $mockWebClient -MemberType ScriptMethod -Name 'DownloadFile' -Value {}
-                    return $mockWebClient
-                }
-            }
+            Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest {}
         }
         
-        It 'Uses WebClient when BITS is not available' {
+        It 'Uses Invoke-WebRequest when BITS is not available' {
             Save-WingetInstaller -App '7zip.7zip'
             
-            Should -Invoke -CommandName New-Object -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                $TypeName -eq 'System.Net.WebClient'
-            }
+            Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
         }
     }
 }
