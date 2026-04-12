@@ -219,7 +219,7 @@ function Get-LatestWingetVersion {
                             }
                         } catch {
                             # Silently continue if publisher doesn't exist
-                            Write-Verbose "Publisher not found: $pub - continuing search"
+                            Write-Verbose "Publisher not found: $publisher - continuing search"
                         }
                     
                         # Stop searching if we found matches
