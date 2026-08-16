@@ -10,8 +10,18 @@ function Search-WingetPackage {
         throw "Broad package name search requires GITHUB_TOKEN. Use an exact package identifier such as 'Publisher.Package' for unauthenticated lookup."
     }
 
+    if ($App -match '[\x00-\x1F\x7F]') {
+        throw [System.ArgumentException]::new('App cannot contain control characters.', 'App')
+    }
+
     $normalizedApp = $App -replace '[^\p{L}\p{Nd}]', ''
-    $query = "$App repo:$($script:WinGetRepoOwner)/$($script:WinGetRepoName) path:$($script:ManifestPath) extension:yaml"
+    $escapedApp = $App.Replace('\', '\\').Replace('"', '\"')
+    $query = '"{0}" repo:{1}/{2} path:{3} extension:yaml' -f @(
+        $escapedApp,
+        $script:WinGetRepoOwner,
+        $script:WinGetRepoName,
+        $script:ManifestPath
+    )
     $encodedQuery = [Uri]::EscapeDataString($query)
     $candidates = [System.Collections.Generic.List[object]]::new()
     $seenPaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)

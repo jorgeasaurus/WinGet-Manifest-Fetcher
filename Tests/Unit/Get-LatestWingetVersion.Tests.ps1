@@ -278,6 +278,33 @@ Describe 'Get-LatestWingetVersion - Edge Cases' {
             Should -Invoke -CommandName Invoke-WingetGitHubRequest -ModuleName WinGetManifestFetcher -Times 1 -Exactly
         }
 
+        It 'Should quote and escape broad-search text before adding qualifiers' {
+            Mock -CommandName Invoke-WingetGitHubRequest -MockWith {
+                @{ total_count = 0; items = @() }
+            } -ModuleName WinGetManifestFetcher
+
+            InModuleScope WinGetManifestFetcher {
+                Search-WingetPackage -App 'Visual Studio Code repo:other/private "beta" C:\Tools'
+            }
+
+            Should -Invoke -CommandName Invoke-WingetGitHubRequest -ModuleName WinGetManifestFetcher -Times 1 -Exactly -ParameterFilter {
+                $encodedQuery = (($UriFragment -split '\?q=', 2)[1] -split '&', 2)[0]
+                $query = [Uri]::UnescapeDataString($encodedQuery)
+                $query -eq '"Visual Studio Code repo:other/private \"beta\" C:\\Tools" repo:microsoft/winget-pkgs path:manifests extension:yaml'
+            }
+        }
+
+        It 'Should reject control characters before broad search' {
+            Mock -CommandName Invoke-WingetGitHubRequest -ModuleName WinGetManifestFetcher
+
+            InModuleScope WinGetManifestFetcher {
+                { Search-WingetPackage -App "PowerToys`nOR repo:other/private" } |
+                    Should -Throw '*control characters*'
+            }
+
+            Should -Invoke -CommandName Invoke-WingetGitHubRequest -ModuleName WinGetManifestFetcher -Times 0 -Exactly
+        }
+
         It 'Should hydrate broad-search candidates lazily until one succeeds' {
             Mock -CommandName Invoke-WingetGitHubRequest -MockWith {
                 @{
@@ -731,15 +758,13 @@ ManifestVersion: 1.0.0
             Should -Invoke -CommandName Set-CacheItem -ModuleName WinGetManifestFetcher -Times 0 -Exactly
         }
 
-        It 'Should continue processing when one manifest file is malformed' {
-            Mock -CommandName Get-GitHubContent -MockWith {
-                @{
-                    entries = @(
-                        @{ name = '1.0.0'; type = 'dir' }
-                        @{ name = '2.0.0'; type = 'dir' }
-                    )
-                }
-            } -ModuleName WinGetManifestFetcher -ParameterFilter { $Path -notlike '*/1.0.0' -and $Path -notlike '*/2.0.0' }
+        It 'Should continue to an older version when the latest version directory fails' {
+            Mock -CommandName Get-WingetPackageVersionEntry -MockWith {
+                @(
+                    [PSCustomObject]@{ name = '1.0.0'; type = 'dir' }
+                    [PSCustomObject]@{ name = '2.0.0'; type = 'dir' }
+                )
+            } -ModuleName WinGetManifestFetcher
             
             Mock -CommandName Get-GitHubContent -MockWith {
                 @{
@@ -747,20 +772,31 @@ ManifestVersion: 1.0.0
                         @{ name = 'Package.installer.yaml'; download_url = 'https://mock/installer.yaml' }
                     )
                 }
-            } -ModuleName WinGetManifestFetcher -ParameterFilter { $Path -like '*/2.0.0' }
+            } -ModuleName WinGetManifestFetcher -ParameterFilter { $Path -like '*/1.0.0' }
             
             Mock -CommandName Get-GitHubContent -MockWith {
-                throw "Malformed content"
-            } -ModuleName WinGetManifestFetcher -ParameterFilter { $Path -like '*/1.0.0' }
+                $exception = [System.Net.WebException]::new('Latest version contents failed')
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    $exception,
+                    'LatestVersionContentFailed',
+                    [System.Management.Automation.ErrorCategory]::ConnectionError,
+                    'manifests/t/Test/Package/2.0.0'
+                )
+            } -ModuleName WinGetManifestFetcher -ParameterFilter { $Path -like '*/2.0.0' }
             
             Mock -CommandName Invoke-RestMethod -MockWith { '' } -ModuleName WinGetManifestFetcher
             Mock -CommandName ConvertFrom-Yaml -MockWith {
-                @{ PackageIdentifier = 'Test.Package'; PackageVersion = '2.0.0'; Installers = @() }
+                @{ PackageIdentifier = 'Test.Package'; PackageVersion = '1.0.0'; Installers = @() }
             } -ModuleName WinGetManifestFetcher
             
-            # Should skip 1.0.0 and use 2.0.0
             $result = Get-LatestWingetVersion -App 'Test.Package' -VersionSource 'manifests/t/Test/Package'
-            $result.PackageVersion | Should -Be '2.0.0'
+            $result.PackageVersion | Should -Be '1.0.0'
+            Should -Invoke -CommandName Get-GitHubContent -ModuleName WinGetManifestFetcher -Times 1 -Exactly -ParameterFilter {
+                $Path -like '*/2.0.0'
+            }
+            Should -Invoke -CommandName Get-GitHubContent -ModuleName WinGetManifestFetcher -Times 1 -Exactly -ParameterFilter {
+                $Path -like '*/1.0.0'
+            }
         }
         
         It 'Should handle empty version directories' {

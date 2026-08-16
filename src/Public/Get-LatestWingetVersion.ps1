@@ -195,6 +195,10 @@ function Get-LatestWingetVersion {
             Write-Verbose "Latest version: $($latestVersion.name)"
 
             # Starting from the most recent version, find the first with a valid installer manifest
+            $installerManifest = $null
+            $defaultManifest = $null
+            $localeManifest = $null
+            $versionContentError = $null
             for ($i = 0; $i -lt $sortedVersions.Count; $i++) {
 
                 $checkVersion = $sortedVersions[$i]
@@ -204,9 +208,16 @@ function Get-LatestWingetVersion {
                 $versionPath = $package.Path + "/" + $checkVersion.name
                 Write-Verbose "Fetching installer manifest: $versionPath/$($package.PackageId).installer.yaml"
 
-                $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
-
-                $manifestFiles = @($manifestContent.Entries)
+                try {
+                    $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
+                    $manifestFiles = @($manifestContent.Entries)
+                } catch {
+                    if (-not $versionContentError) {
+                        $versionContentError = $_
+                    }
+                    Write-Verbose "Could not read version directory $versionPath`: $_"
+                    continue
+                }
 
                 # Find the manifest files
                 $installerManifest = $manifestFiles | Where-Object { $_.name -like '*installer.yaml' } | Select-Object -First 1
@@ -229,6 +240,9 @@ function Get-LatestWingetVersion {
 
             # Ensure we have an installer manifest
             if (-not $installerManifest) {
+                if ($versionContentError) {
+                    throw $versionContentError
+                }
                 Write-Warning "Package '$($package.PackageId)' exists but no version has a valid installer manifest."
                 continue
             }
