@@ -8,29 +8,22 @@
     installer information from WinGet manifests without requiring the WinGet client to be installed.
 .NOTES
     Author: WinGet Manifest Fetcher Contributors
-    Version: 1.5.0
+    Version: 1.6.0
 #>
 
-# Import required modules
 $ErrorActionPreference = 'Stop'
-
-# Check for required modules and provide helpful error messages
-$requiredModules = @(
-    @{Name = 'PowerShellForGitHub'; MinVersion = '0.16.0' },
-    @{Name = 'powershell-yaml'; MinVersion = '0.4.0' }
-)
-
-foreach ($module in $requiredModules) {
-    if (-not (Get-Module -ListAvailable -Name $module.Name | Where-Object { $_.Version -ge $module.MinVersion })) {
-        throw "Required module '$($module.Name)' version $($module.MinVersion) or higher is not installed. Please run: Install-Module -Name $($module.Name) -MinimumVersion $($module.MinVersion)"
-    }
-    Import-Module $module.Name -MinimumVersion $module.MinVersion -ErrorAction Stop
-}
 
 # Module-level variables
 $script:WinGetRepoOwner = 'microsoft'
 $script:WinGetRepoName = 'winget-pkgs'
 $script:ManifestPath = 'manifests'
+
+# Windows PowerShell uses ServicePointManager. Preserve OS-managed
+# SystemDefault (0); older .NET defaults need TLS 1.2 enabled once at import.
+if ($PSEdition -eq 'Desktop' -and [int][Net.ServicePointManager]::SecurityProtocol -ne 0) {
+    [Net.ServicePointManager]::SecurityProtocol =
+        [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
 
 # Cache configuration
 $script:CacheEnabled = $true
@@ -52,18 +45,8 @@ if ($IsWindows -or (-not (Test-Path Variable:IsWindows) -and $env:OS -eq 'Window
 $script:CacheExpirationMinutes = 60  # Default cache expiration time
 $script:CacheVersion = '1.0'  # Cache version for invalidation
 
-# Disable PowerShellForGitHub telemetry by default
-Set-GitHubConfiguration -DisableTelemetry -SessionOnly
-
-# Configure GitHub authentication if token is available
-if ($env:GITHUB_TOKEN) {
-    # Environment variable is already in-memory plaintext; SecureString conversion required by PSCredential
-    $secureToken = ConvertTo-SecureString -String $env:GITHUB_TOKEN -AsPlainText -Force
-    $credential = New-Object System.Management.Automation.PSCredential("token", $secureToken)
-    Set-GitHubAuthentication -Credential $credential -SessionOnly
-    Write-Verbose "GitHub authentication configured from GITHUB_TOKEN environment variable"
-} else {
-    Write-Warning "No GitHub authentication configured. API rate limits will apply. Set GITHUB_TOKEN environment variable or use Set-GitHubAuthentication."
+if (-not $env:GITHUB_TOKEN) {
+    Write-Warning "No GitHub authentication configured. API rate limits will apply. Set the GITHUB_TOKEN environment variable to authenticate."
 }
 
 # Initialize cache directory

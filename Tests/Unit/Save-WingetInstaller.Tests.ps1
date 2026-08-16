@@ -1,416 +1,255 @@
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 BeforeAll {
-    # Load test helper to properly import the module
     . (Join-Path (Split-Path -Parent $PSScriptRoot) 'TestHelper.ps1')
-    
-    # Disable caching for tests
-    InModuleScope WinGetManifestFetcher {
-        $script:CacheEnabled = $false
-    }
-    
-    # Mock functions
-    Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-        return [PSCustomObject]@{
-            PackageIdentifier = '7zip.7zip'
-            PackageName = '7-Zip'
-            PackageVersion = '23.01'
-            Publisher = '7-Zip'
-            Installers = @(
-                [PSCustomObject]@{
-                    Architecture = 'x64'
-                    InstallerType = 'exe'
-                    InstallerUrl = 'https://www.7-zip.org/a/7z2301-x64.exe'
-                    InstallerSha256 = 'A7803233EEDB6A4B59B3024CCF9292A6FFFB94507DC998AA67C5B745D197A5DC'
-                },
-                [PSCustomObject]@{
-                    Architecture = 'x86'
-                    InstallerType = 'exe'
-                    InstallerUrl = 'https://www.7-zip.org/a/7z2301.exe'
-                    InstallerSha256 = '87C09C4B9E76B4F3C8EE1A95AE96DBDE45DFE968BB6759F91F6F2F0E12345678'
-                },
-                [PSCustomObject]@{
-                    Architecture = 'arm64'
-                    InstallerType = 'exe'
-                    InstallerUrl = 'https://www.7-zip.org/a/7z2301-arm64.exe'
-                    InstallerSha256 = 'FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00FF00'
-                }
-            )
-        }
-    }
-    
-    Mock -ModuleName WinGetManifestFetcher Test-Path {
-        param($Path)
-        if ($Path -like "*\Downloads" -or $Path -like "*/Downloads") {
-            return $true
-        }
-        if ($Path -like "*.exe") {
-            return $false
-        }
-        return $true
-    }
-    
-    Mock -ModuleName WinGetManifestFetcher New-Item {}
-    Mock -ModuleName WinGetManifestFetcher Resolve-Path {
-        param($Path)
-        return [PSCustomObject]@{ Path = [System.IO.Path]::GetFullPath($Path) }
-    }
-    
-    # Mock download functions based on platform
-    if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-        Mock -ModuleName WinGetManifestFetcher Start-BitsTransfer {}
-    }
-    Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest {}
-    
-    Mock -ModuleName WinGetManifestFetcher Get-FileHash {
-        return [PSCustomObject]@{
-            Hash = 'A7803233EEDB6A4B59B3024CCF9292A6FFFB94507DC998AA67C5B745D197A5DC'
-        }
-    }
-    Mock -ModuleName WinGetManifestFetcher Remove-Item {}
-    Mock -ModuleName WinGetManifestFetcher Get-Item {
-        param($Path)
-        $mockFile = [PSCustomObject]@{
-            Name = [System.IO.Path]::GetFileName($Path)
-            FullName = $Path
-            Length = 12345678
-            LastWriteTime = Get-Date
-        }
-        Add-Member -InputObject $mockFile -MemberType ScriptMethod -Name 'Add-Member' -Value {
-            param($MemberType, $Name, $Value, [switch]$PassThru)
-            Add-Member -InputObject $this -MemberType $MemberType -Name $Name -Value $Value -Force
-            if ($PassThru) { return $this }
-        }
-        return $mockFile
-    }
-    Mock -ModuleName WinGetManifestFetcher Write-Verbose {}
-    Mock -ModuleName WinGetManifestFetcher Write-Warning {}
 }
 
 Describe 'Save-WingetInstaller' {
-    Context 'Parameter Validation' {
-        It 'Requires App parameter' {
-            $cmd = Get-Command Save-WingetInstaller
-            $cmd.Parameters['App'].Attributes.Mandatory | Should -Be $true
-        }
-        
-        It 'Rejects null App parameter' {
-            { Save-WingetInstaller -App $null } | Should -Throw
-        }
-        
-        It 'Rejects empty App parameter' {
-            { Save-WingetInstaller -App '' } | Should -Throw
-        }
-        
-        It 'Validates Architecture parameter' {
-            $cmd = Get-Command Save-WingetInstaller
-            $validateSet = $cmd.Parameters['Architecture'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }
-            $validateSet.ValidValues | Should -Contain 'x64'
-            $validateSet.ValidValues | Should -Contain 'x86'
-            $validateSet.ValidValues | Should -Contain 'arm64'
-            $validateSet.ValidValues | Should -Contain 'arm'
-            $validateSet.ValidValues | Should -Contain 'neutral'
-        }
-        
-        It 'Supports WhatIf' {
-            $cmd = Get-Command Save-WingetInstaller
-            $cmd.Parameters.ContainsKey('WhatIf') | Should -Be $true
-        }
+    BeforeEach {
+        Mock Get-LatestWingetVersion {
+            [PSCustomObject]@{
+                PackageIdentifier = '7zip.7zip'
+                PackageName = '7-Zip'
+                PackageVersion = '23.01'
+                Installers = @(
+                    [PSCustomObject]@{
+                        Architecture = 'x64'
+                        InstallerType = 'exe'
+                        InstallerUrl = 'https://example.test/7z-x64.exe'
+                        InstallerSha256 = '9F64A747E1B97F131FABB6B447296C9B6F0201E79FB3C5356E6C77E89B6A806A'
+                    }
+                    [PSCustomObject]@{
+                        Architecture = 'x86'
+                        InstallerType = 'msi'
+                        InstallerUrl = 'https://example.test/7z-x86.msi'
+                        InstallerSha256 = '9F64A747E1B97F131FABB6B447296C9B6F0201E79FB3C5356E6C77E89B6A806A'
+                    }
+                )
+            }
+        } -ModuleName WinGetManifestFetcher
+        Mock Get-Command { $null } -ModuleName WinGetManifestFetcher -ParameterFilter { $Name -eq 'Start-BitsTransfer' }
+        Mock Invoke-WebRequest {
+            [IO.File]::WriteAllBytes($OutFile, [byte[]](1, 2, 3, 4))
+        } -ModuleName WinGetManifestFetcher
     }
-    
-    Context 'Basic Functionality' {
-        BeforeEach {
-            Mock -ModuleName WinGetManifestFetcher Test-Path {
-                param($Path)
-                if ($Path -like "*.exe") {
-                    return $false
-                }
-                return $true
-            } -Verifiable
-        }
-        
-        It 'Downloads installer to specified path' {
-            Save-WingetInstaller -App '7zip.7zip' -Path './Downloads'
-            
-            Should -Invoke -CommandName Get-LatestWingetVersion -ModuleName WinGetManifestFetcher -Times 1
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 1
-            } else {
-                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
-            }
-        }
-        
-        It 'Creates directory if it does not exist' {
-            Mock -ModuleName WinGetManifestFetcher Test-Path {
-                param($Path)
-                if ($Path -eq './NewFolder' -or $Path -like '*/NewFolder') {
-                    return $false
-                }
-                if ($Path -like "*.exe") {
-                    return $false
-                }
-                return $true
-            }
-            
-            Mock -ModuleName WinGetManifestFetcher Resolve-Path {
-                param($Path)
-                return [PSCustomObject]@{ Path = './NewFolder' }
-            }
-            
-            Save-WingetInstaller -App '7zip.7zip' -Path './NewFolder'
-            
-            Should -Invoke -CommandName New-Item -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                $ItemType -eq 'Directory' -and $Path -eq './NewFolder'
-            }
-        }
-        
-        It 'Returns file info with PassThru' {
-            $result = Save-WingetInstaller -App '7zip.7zip' -PassThru
-            
-            $result | Should -Not -BeNullOrEmpty
-            $result.PackageId | Should -Be '7zip.7zip'
-            $result.PackageVersion | Should -Be '23.01'
-            $result.Architecture | Should -Be 'x64'
-            $result.InstallerType | Should -Be 'exe'
-            $result.HashVerified | Should -Be $true
-        }
+
+    It 'exposes the supported parameter contract' {
+        $command = Get-Command Save-WingetInstaller
+
+        $command.Parameters.App.Attributes.Mandatory | Should -BeTrue
+        $command.Parameters.ContainsKey('WhatIf') | Should -BeTrue
+        $architecture = $command.Parameters.Architecture.Attributes |
+            Where-Object { $_ -is [Management.Automation.ValidateSetAttribute] }
+        $architecture.ValidValues | Should -Be @('x64', 'x86', 'arm64', 'arm', 'neutral')
     }
-    
-    Context 'Architecture Selection' {
-        It 'Downloads x64 by default' {
-            Save-WingetInstaller -App '7zip.7zip'
-            
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                    $Source -like '*7z2301-x64.exe'
-                }
-            } else {
-                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
-            }
-        }
-        
-        It 'Downloads specified architecture' {
-            # Mock Get-FileHash to return the correct hash for x86
-            Mock -ModuleName WinGetManifestFetcher Get-FileHash {
-                return [PSCustomObject]@{
-                    Hash = '87C09C4B9E76B4F3C8EE1A95AE96DBDE45DFE968BB6759F91F6F2F0E12345678'
-                }
-            }
-            
-            Save-WingetInstaller -App '7zip.7zip' -Architecture 'x86'
-            
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                    $Source -like '*7z2301.exe'
-                }
-            } else {
-                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
-            }
-        }
-        
-        It 'Errors when architecture not available' {
-            Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-                return [PSCustomObject]@{
-                    PackageIdentifier = 'Test.Package'
-                    Installers = @(
-                        [PSCustomObject]@{
-                            Architecture = 'x64'
-                            InstallerUrl = 'https://example.com/test.exe'
-                        }
-                    )
-                }
-            }
-            
-            { Save-WingetInstaller -App 'Test.Package' -Architecture 'arm64' -ErrorAction Stop } | Should -Throw "*No installer found for architecture 'arm64'*"
-        }
+
+    It 'stages, validates, and commits real bytes to a new destination' {
+        $destination = Join-Path $TestDrive 'downloads'
+
+        $result = Save-WingetInstaller 7zip.7zip -Path $destination -PassThru
+
+        $result.FullName | Should -Be (Join-Path $destination '7z-x64.exe')
+        $result.PackageId | Should -Be '7zip.7zip'
+        $result.PackageVersion | Should -Be '23.01'
+        $result.Architecture | Should -Be 'x64'
+        $result.HashVerified | Should -BeTrue
+        [IO.File]::ReadAllBytes($result.FullName) | Should -Be ([byte[]](1, 2, 3, 4))
+        @(Get-ChildItem $destination -Filter '*.download' -Force) | Should -HaveCount 0
     }
-    
-    Context 'Installer Type Filtering' {
-        BeforeEach {
-            Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-                return [PSCustomObject]@{
-                    PackageIdentifier = 'Test.Package'
-                    PackageName = 'Test Package'
-                    PackageVersion = '1.0.0'
-                    Installers = @(
-                        [PSCustomObject]@{
-                            Architecture = 'x64'
-                            InstallerType = 'msi'
-                            InstallerUrl = 'https://example.com/test.msi'
-                            InstallerSha256 = 'AAAA'
-                        },
-                        [PSCustomObject]@{
-                            Architecture = 'x64'
-                            InstallerType = 'exe'
-                            InstallerUrl = 'https://example.com/test.exe'
-                            InstallerSha256 = 'BBBB'
-                        }
-                    )
-                }
-            }
-        }
-        
-        It 'Downloads specified installer type' {
-            Mock -ModuleName WinGetManifestFetcher Test-Path {
-                param($Path)
-                if ($Path -like "*.msi") {
-                    return $false
-                }
-                return $true
-            }
-            
-            Mock -ModuleName WinGetManifestFetcher Get-FileHash {
-                return [PSCustomObject]@{
-                    Hash = 'AAAA'
-                }
-            }
-            
-            Save-WingetInstaller -App 'Test.Package' -InstallerType 'msi'
-            
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                    $Source -like '*.msi'
-                }
-            } else {
-                Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
-            }
-        }
-        
-        It 'Errors when installer type not available' {
-            { Save-WingetInstaller -App 'Test.Package' -InstallerType 'zip' -ErrorAction Stop } | Should -Throw "*No installer found for type 'zip'*"
-        }
+
+    It 'selects the requested architecture and installer type' {
+        $result = Save-WingetInstaller 7zip.7zip -Path $TestDrive -Architecture x86 -InstallerType msi -PassThru
+
+        $result.Name | Should -Be '7z-x86.msi'
+        $result.Architecture | Should -Be 'x86'
+        $result.InstallerType | Should -Be 'msi'
     }
-    
-    Context 'Hash Validation' {
-        It 'Validates hash by default' {
-            Save-WingetInstaller -App '7zip.7zip'
-            
-            Should -Invoke -CommandName Get-FileHash -ModuleName WinGetManifestFetcher -Times 1
-        }
-        
-        It 'Skips hash validation when requested' {
-            Save-WingetInstaller -App '7zip.7zip' -SkipHashValidation
-            
-            Should -Invoke -CommandName Get-FileHash -ModuleName WinGetManifestFetcher -Times 0
-            Should -Invoke -CommandName Write-Warning -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                $Message -like '*Hash validation skipped*'
-            }
-        }
-        
-        It 'Removes file on hash mismatch' {
-            Mock -ModuleName WinGetManifestFetcher Get-FileHash {
-                return [PSCustomObject]@{
-                    Hash = 'WRONGHASH'
-                }
-            } -Verifiable
-            
-            Mock -ModuleName WinGetManifestFetcher Test-Path {
-                param($Path)
-                if ($Path -like "*.exe") {
-                    return $false
-                }
-                return $true
-            }
-            
-            Save-WingetInstaller -App '7zip.7zip' -ErrorAction SilentlyContinue
-            
-            Should -Invoke -CommandName Remove-Item -ModuleName WinGetManifestFetcher -Times 1
-        }
-        
-        It 'Warns when no hash in manifest' {
-            Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-                return [PSCustomObject]@{
-                    PackageIdentifier = 'Test.Package'
-                    Installers = @(
-                        [PSCustomObject]@{
-                            Architecture = 'x64'
-                            InstallerType = 'exe'
-                            InstallerUrl = 'https://example.com/test.exe'
-                            InstallerSha256 = $null
-                        }
-                    )
-                }
-            }
-            
-            Save-WingetInstaller -App 'Test.Package'
-            
-            Should -Invoke -CommandName Write-Warning -ModuleName WinGetManifestFetcher -Times 1 -ParameterFilter {
-                $Message -like '*No hash available in manifest*'
-            }
-        }
+
+    It 'preserves PackageNotFound without creating the destination' {
+        $destination = Join-Path $TestDrive 'missing-package'
+        Mock Get-LatestWingetVersion {
+            $exception = [Management.Automation.ItemNotFoundException]::new("Package 'Missing.Package' not found")
+            throw [Management.Automation.ErrorRecord]::new(
+                $exception,
+                'PackageNotFound',
+                [Management.Automation.ErrorCategory]::ObjectNotFound,
+                'Missing.Package'
+            )
+        } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller Missing.Package -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'PackageNotFound*'
+        Test-Path $destination | Should -BeFalse
     }
-    
-    Context 'Error Handling' {
-        It 'Handles package not found' {
-            Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-                return $null
-            }
-            
-            { Save-WingetInstaller -App 'NonExistent.Package' -ErrorAction Stop } | Should -Throw "*Package 'NonExistent.Package' not found*"
-        }
-        
-        It 'Handles no installers in package' {
-            Mock -ModuleName WinGetManifestFetcher Get-LatestWingetVersion {
-                return [PSCustomObject]@{
-                    PackageIdentifier = 'Test.Package'
-                    Installers = @()
-                }
-            }
-            
-            { Save-WingetInstaller -App 'Test.Package' -ErrorAction Stop } | Should -Throw "*No installers found for package*"
-        }
-        
-        It 'Handles download failure' {
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Mock -ModuleName WinGetManifestFetcher Start-BitsTransfer { throw "Network error" }
-            }
-            Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest { throw "Network error" }
-            
-            { Save-WingetInstaller -App '7zip.7zip' -ErrorAction Stop } | Should -Throw
-        }
-        
-        It 'Does not overwrite existing file without Force' {
-            Mock -ModuleName WinGetManifestFetcher Test-Path {
-                param($Path)
-                if ($Path -like "*.exe") {
-                    return $true
-                }
-                return $true
-            }
-            
-            { Save-WingetInstaller -App '7zip.7zip' -ErrorAction Stop } | Should -Throw "*File already exists*"
-        }
+
+    It 'reports NoInstallersFound without creating the destination' {
+        $destination = Join-Path $TestDrive 'no-installers'
+        Mock Get-LatestWingetVersion { [PSCustomObject]@{ Installers = @() } } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller Test.Empty -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'NoInstallersFound*'
+        Test-Path $destination | Should -BeFalse
     }
-    
-    Context 'WhatIf Support' {
-        It 'Does not download when using WhatIf' {
-            Save-WingetInstaller -App '7zip.7zip' -WhatIf
-            
-            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                Should -Invoke -CommandName Start-BitsTransfer -ModuleName WinGetManifestFetcher -Times 0
-            }
-            Should -Invoke -CommandName Get-FileHash -ModuleName WinGetManifestFetcher -Times 0
-        }
+
+    It 'preserves the architecture error identity' {
+        $destination = Join-Path $TestDrive 'bad-architecture'
+
+        $failure = try { Save-WingetInstaller 7zip.7zip -Path $destination -Architecture arm64 -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'ArchitectureNotFound*'
+        Test-Path $destination | Should -BeFalse
     }
-    
-    Context 'Invoke-WebRequest Fallback' {
-        BeforeEach {
-            Mock -ModuleName WinGetManifestFetcher Get-Command {
-                param($Name)
-                if ($Name -eq 'Start-BitsTransfer') { return $null }
-                return $true
+
+    It 'preserves the installer-type error identity' {
+        $destination = Join-Path $TestDrive 'bad-type'
+
+        $failure = try { Save-WingetInstaller 7zip.7zip -Path $destination -InstallerType zip -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'InstallerTypeNotFound*'
+        Test-Path $destination | Should -BeFalse
+    }
+
+    It 'rejects HTTP before creating the destination or downloading' {
+        $destination = Join-Path $TestDrive 'insecure'
+        Mock Get-LatestWingetVersion {
+            [PSCustomObject]@{ Installers = @([PSCustomObject]@{
+                Architecture = 'x64'; InstallerType = 'exe'
+                InstallerUrl = 'http://example.test/app.exe'; InstallerSha256 = 'AA'
+            }) }
+        } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller Test.Insecure -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'InsecureInstallerUrl*'
+        Test-Path $destination | Should -BeFalse
+        Should -Invoke Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 0
+    }
+
+    It 'requires a manifest hash before creating the destination' {
+        $destination = Join-Path $TestDrive 'missing-hash'
+        Mock Get-LatestWingetVersion {
+            [PSCustomObject]@{ Installers = @([PSCustomObject]@{
+                Architecture = 'x64'; InstallerType = 'exe'
+                InstallerUrl = 'https://example.test/app.exe'; InstallerSha256 = $null
+            }) }
+        } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller Test.NoHash -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'InstallerHashMissing*'
+        Test-Path $destination | Should -BeFalse
+        Should -Invoke Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 0
+    }
+
+    It 'does not replace an existing file without Force' {
+        $destination = Join-Path $TestDrive 'existing'
+        $null = New-Item -ItemType Directory -Path $destination
+        $target = Join-Path $destination '7z-x64.exe'
+        [IO.File]::WriteAllText($target, 'original')
+
+        $failure = try { Save-WingetInstaller 7zip.7zip -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'FileExists*'
+        [IO.File]::ReadAllText($target) | Should -Be 'original'
+        Should -Invoke Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 0
+    }
+
+    It 'atomically replaces an existing file with Force and completes backup cleanup' {
+        $destination = Join-Path $TestDrive 'forced-replacement'
+        $null = New-Item -ItemType Directory -Path $destination
+        $target = Join-Path $destination '7z-x64.exe'
+        [IO.File]::WriteAllText($target, 'original')
+
+        $result = Save-WingetInstaller 7zip.7zip -Path $destination -Force -PassThru
+
+        $result.FullName | Should -Be $target
+        [IO.File]::ReadAllBytes($target) | Should -Be ([byte[]](1, 2, 3, 4))
+        @(Get-ChildItem $destination -Filter '*.download' -Force) | Should -HaveCount 0
+        @(Get-ChildItem $destination -Filter '*.bak' -Force) | Should -HaveCount 0
+    }
+
+    It 'preserves an existing file when forced validation fails' {
+        $destination = Join-Path $TestDrive 'forced-mismatch'
+        $null = New-Item -ItemType Directory -Path $destination
+        $target = Join-Path $destination '7z-x64.exe'
+        [IO.File]::WriteAllText($target, 'original')
+        Mock Get-FileHash { [PSCustomObject]@{ Hash = 'WRONG' } } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller 7zip.7zip -Path $destination -Force -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'HashMismatch*'
+        [IO.File]::ReadAllText($target) | Should -Be 'original'
+        @(Get-ChildItem $destination -Filter '*.download' -Force) | Should -HaveCount 0
+    }
+
+    It 'preserves an existing file and cleans staged bytes when a forced commit fails' {
+        $destination = Join-Path $TestDrive 'forced-commit-failure'
+        $null = New-Item -ItemType Directory -Path $destination
+        $target = Join-Path $destination '7z-x64.exe'
+        [IO.File]::WriteAllText($target, 'original')
+        Mock Complete-WingetAtomicFileWrite {
+            param($TemporaryPath, $DestinationPath, $ReplaceExisting)
+            [IO.File]::Exists($TemporaryPath) | Should -BeTrue
+            [IO.File]::ReadAllText($DestinationPath) | Should -Be 'original'
+            $ReplaceExisting | Should -BeTrue
+            throw 'commit failed'
+        } -ModuleName WinGetManifestFetcher
+
+        { Save-WingetInstaller 7zip.7zip -Path $destination -Force -ErrorAction Stop } | Should -Throw '*commit failed*'
+
+        [IO.File]::ReadAllText($target) | Should -Be 'original'
+        @(Get-ChildItem $destination -Filter '*.download' -Force) | Should -HaveCount 0
+    }
+
+    It 'cleans staged bytes and reports DownloadFailed after a network error' {
+        $destination = Join-Path $TestDrive 'download-failure'
+        Mock Invoke-WebRequest { throw 'network unavailable' } -ModuleName WinGetManifestFetcher
+
+        $failure = try { Save-WingetInstaller 7zip.7zip -Path $destination -ErrorAction Stop } catch { $_ }
+
+        $failure.FullyQualifiedErrorId | Should -BeLike 'DownloadFailed*'
+        @(Get-ChildItem $destination -Force) | Should -HaveCount 0
+    }
+
+    It 'cleans staged bytes when hash calculation fails' {
+        $destination = Join-Path $TestDrive 'hash-failure'
+        Mock Get-FileHash { throw 'hash read error' } -ModuleName WinGetManifestFetcher
+
+        { Save-WingetInstaller 7zip.7zip -Path $destination -ErrorAction Stop } | Should -Throw '*hash read error*'
+        @(Get-ChildItem $destination -Force) | Should -HaveCount 0
+    }
+
+    It 'allows an explicitly unverified download' {
+        $destination = Join-Path $TestDrive 'skip-hash'
+        Mock Get-LatestWingetVersion {
+            [PSCustomObject]@{
+                PackageIdentifier = 'Test.NoHash'; PackageName = 'No Hash'; PackageVersion = '1.0'
+                Installers = @([PSCustomObject]@{
+                    Architecture = 'x64'; InstallerType = 'exe'
+                    InstallerUrl = 'https://example.test/app.exe'; InstallerSha256 = $null
+                })
             }
-            Mock -ModuleName WinGetManifestFetcher Invoke-WebRequest {}
-        }
-        
-        It 'Uses Invoke-WebRequest when BITS is not available' {
-            Save-WingetInstaller -App '7zip.7zip'
-            
-            Should -Invoke -CommandName Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 1
-        }
+        } -ModuleName WinGetManifestFetcher
+
+        $result = Save-WingetInstaller Test.NoHash -Path $destination -SkipHashValidation -PassThru -WarningVariable warnings
+
+        $result.HashVerified | Should -BeFalse
+        $warnings.Message | Should -BeLike '*Hash validation skipped*'
+        Test-Path $result.FullName | Should -BeTrue
+    }
+
+    It 'honors WhatIf without creating or downloading' {
+        $destination = Join-Path $TestDrive 'what-if'
+
+        Save-WingetInstaller 7zip.7zip -Path $destination -WhatIf
+
+        Test-Path $destination | Should -BeFalse
+        Should -Invoke Invoke-WebRequest -ModuleName WinGetManifestFetcher -Times 0
     }
 }
 
 AfterAll {
-    Remove-Module -Name WinGetManifestFetcher -Force -ErrorAction SilentlyContinue
+    Remove-Module WinGetManifestFetcher -Force -ErrorAction SilentlyContinue
 }

@@ -83,365 +83,255 @@ function Get-LatestWingetVersion {
         [string]$VersionSource
     )
     
-    process {
-        if ($VersionSource) {
-            Write-Verbose "Using provided version source: $VersionSource"
-        } else {
-            Write-Verbose "Searching for package '$App' in $($script:WinGetRepoOwner)/$($script:WinGetRepoName) repository..."
-        }
+    if ($VersionSource) {
+        Write-Verbose "Using provided version source: $VersionSource"
+    } else {
+        Write-Verbose "Searching for package '$App' in $($script:WinGetRepoOwner)/$($script:WinGetRepoName) repository..."
+    }
 
-        $packageResults = [System.Collections.Generic.List[object]]::new()
+    $firstError = $null
+    $notFoundCause = $null
+
+    $cacheValue = if ($VersionSource) { $VersionSource } else { $App }
+    $cachePrefix = if ($VersionSource) { 'package_direct' } else { 'package' }
+    $cacheKey = New-WingetCacheKey -Namespace $cachePrefix -Label $cacheValue -Value $cacheValue
+
+    # Check cache first
+    $cachedResult = Get-CacheItem -Key $cacheKey
+    if ($cachedResult) {
+        Write-Verbose "Returning cached result for $App"
+        return $cachedResult
+    }
+
+    $foundPackages = @(Resolve-WingetPackage -App $App -VersionSource $VersionSource -ErrorAction Stop)
+
+    Write-Verbose "Found $($foundPackages.Count) potential package(s)"
+
+    $candidateQueue = New-Object System.Collections.Queue
+    foreach ($candidate in $foundPackages) {
+        $candidateQueue.Enqueue($candidate)
+    }
+    $exactFallbackApp = if (-not $VersionSource -and ($App -match '^([^.]+)\.(.+)$' -or $App -match '^([^/]+)/(.+)$')) {
+        $App
+    } else {
+        $null
+    }
+
+    # Process each found package
+    while ($candidateQueue.Count -gt 0) {
+        $package = $candidateQueue.Dequeue()
+        Write-Verbose "Processing package: $($package.PackageId)"
+
+        # Resolve the package leaf before processing it. Only this phase may
+        # reinterpret an exact-looking display name as a broad search.
+        Write-Verbose "Retrieving version folders..."
+        try {
+            $versionDirs = @(Get-WingetPackageVersionEntry -Path $package.Path -PackageIdentifier $package.PackageId -ErrorAction Stop)
+        } catch {
+            if ($exactFallbackApp -and
+                ($_.Exception -is [System.Management.Automation.ItemNotFoundException] -or
+                    $_.Exception -is [System.IO.InvalidDataException])) {
+                $searchApp = $exactFallbackApp
+                $exactFallbackApp = $null
+                $notFoundCause = $_.Exception
+                if ($env:GITHUB_TOKEN) {
+                    foreach ($candidate in @(Search-WingetPackage -App $searchApp -ErrorAction Stop)) {
+                        $candidateQueue.Enqueue($candidate)
+                    }
+                }
+                continue
+            }
+
+            if (-not $firstError) {
+                $firstError = $_
+            }
+            Write-Warning "Error processing package $($package.PackageId): $_"
+            Write-Verbose "Full error: $($_.Exception.Message)"
+            continue
+        }
+        $exactFallbackApp = $null
 
         try {
-            # Generate cache key for the entire result
-            $cacheKey = "package_$($App -replace '[^\w\-\.]', '_')"
-            if ($VersionSource) {
-                $cacheKey = "package_direct_$($VersionSource -replace '[^\w\-\.]', '_')"
+            if (-not $versionDirs -or $versionDirs.Count -eq 0) {
+                Write-Verbose "No version directories found for $($package.PackageId)"
+                continue
             }
-            
-            # Check cache first
-            $cachedResult = Get-CacheItem -Key $cacheKey
-            if ($cachedResult) {
-                Write-Verbose "Returning cached result for $App"
-                $packageResults.Add($cachedResult)
-                return
+
+            if ($package.Path -eq 'manifests/m/Mozilla/Firefox') {
+                $versionDirs = $versionDirs | Where-Object { $_.name -match '^([\d]+(?:\.[\d]+)*)' }
             }
-            
-            # If VersionSource is provided, use it directly
-            if ($VersionSource) {
-                # Extract package info from the path
-                # Example: "manifests/a/Adobe/Acrobat/Reader/64-bit" -> Adobe.Acrobat.Reader.64-bit
-                $pathParts = $VersionSource -split '/'
-                if ($pathParts.Count -ge 3) {
-                    # Skip 'manifests' and letter directory
-                    $packageParts = $pathParts[2..($pathParts.Count - 1)]
-                    $packageId = $packageParts -join '.'
-                    
-                    $foundPackages = [System.Collections.Generic.List[hashtable]]::new()
-                    $foundPackages.Add(@{
-                            Publisher = $packageParts[0]
-                            Package   = $packageParts[1..($packageParts.Count - 1)] -join '.'
-                            Path      = $VersionSource
-                            PackageId = $packageId
-                        })
-                    
-                    Write-Verbose "Using direct path for package: $packageId"
-                } else {
-                    throw "Invalid VersionSource format. Expected format: 'manifests/[letter]/[Publisher]/[Package]/...'"
-                }
-            } else {
-                # Original search logic
-                # Parse the application name to determine search strategy
-                # Check if it's a full package identifier (Publisher.Package)
-                if ($App -match '^([^.]+)\.(.+)$') {
-                    $searchPublisher = $Matches[1]
-                    $searchPackage = $Matches[2]
-                    Write-Verbose "Detected package identifier format: $searchPublisher.$searchPackage"
-                }
-                # Check if it's Publisher/Package format
-                elseif ($App -match '^([^/]+)/(.+)$') {
-                    $searchPublisher = $Matches[1]
-                    $searchPackage = $Matches[2]
-                    Write-Verbose "Detected publisher/package format: $searchPublisher/$searchPackage"
-                }
-            
-                # If we have publisher and package, try direct path
-                if ($searchPublisher -and $searchPackage) {
-                    $firstLetter = $searchPublisher.Substring(0, 1).ToLower()
-                    # Replace dots with forward slashes in the package name for path construction
-                    $packagePathPart = $searchPackage -replace '\.', '/'
-                    $packagePath = "$script:ManifestPath/$firstLetter/$searchPublisher/$packagePathPart"
-                
-                    Write-Verbose "Found package path: $packagePath"
 
-                    try {
-                        $testContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $packagePath -ErrorAction Stop
-
-                        # Check if we got a single directory item (PowerShellForGitHub quirk)
-                        if ($testContent -and $testContent.type -eq 'dir') {
-                            $foundPackages = [System.Collections.Generic.List[hashtable]]::new()
-                        $foundPackages.Add(@{
-                                    Publisher = $searchPublisher
-                                    Package   = $searchPackage
-                                    Path      = $packagePath
-                                    PackageId = "$searchPublisher.$searchPackage"
-                                })
-                        }
-                    } catch {
-                        Write-Verbose "Package not found at direct path, will search"
-                        $foundPackages = [System.Collections.Generic.List[hashtable]]::new()
-                    }
-                }
-            
-                # If direct path didn't work or wasn't applicable, search common publishers
-                if (-not $foundPackages -or $foundPackages.Count -eq 0) {
-                    Write-Verbose "Searching for package by name..."
-                
-                    $foundPackages = [System.Collections.Generic.List[hashtable]]::new()
-
-                    # Search for package by name (limited to avoid timeout)
-                    $searchLetter = $App.Substring(0, 1).ToLower()
-                
-                    try {
-                        $publisherDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path "$script:ManifestPath/$searchLetter" -ErrorAction Stop
-                    
-                        # Handle PowerShellForGitHub structure
-                        $dirList = if ($publisherDirs -is [array]) { $publisherDirs } elseif ($publisherDirs.entries) { $publisherDirs.entries } else { @() }
-                    
-                        foreach ($pubDir in $dirList | Where-Object { $_.type -eq 'dir' } | Select-Object -First 20) {
-                            try {
-                                $packages = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $pubDir.path -ErrorAction SilentlyContinue
-                            
-                                $packageList = if ($packages -is [array]) { $packages } elseif ($packages.entries) { $packages.entries } else { @() }
-                            
-                                foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
-                                    if ($pkg.name -like "*$App*" -or $App -like "*$($pkg.name)*") {
-                                        Write-Verbose "Found potential match: $($pubDir.name).$($pkg.name)"
-                                        $foundPackages.Add(@{
-                                            Publisher = $pubDir.name
-                                            Package   = $pkg.name
-                                            Path      = "$($pubDir.path)/$($pkg.name)"
-                                            PackageId = "$($pubDir.name).$($pkg.name)"
-                                        })
-                                    }
-                                }
-                            } catch {
-                                # Continue on error - package directory might not have accessible content
-                                Write-Verbose "Could not access package content for $($pkg.name) - continuing"
+            # Sort versions and get the latest
+            Write-Verbose "Found $($versionDirs.Count) versions. Determining latest version..."
+            $ignoreFolders = 'X|VideoCapture|Telegraph|WiiBalanceBoard|Extension|Module|CN|.validation|Preview|Nightly|Beta|Alpha|Experimental|Canary|Dev|Test|RC|ReleaseCandidate|LTS|EXE'
+            $sortedVersions = @($versionDirs |
+                Where-Object { $_.type -eq 'dir' -and $_.name -notmatch $ignoreFolders } |
+                Sort-Object -Property @{
+                Expression = {
+                    # Extract the numeric prefix (e.g. "1.2.69.448" from "1.2.69.448.ge76b8882")
+                    if ($_.name -match '^([\d]+(?:\.[\d]+)*)') {
+                        # [Version] supports at most four components. Build a lexical key
+                        # whose component lengths and values preserve numeric ordering.
+                        ($Matches[1] -split '\.' | ForEach-Object {
+                            $component = $_.TrimStart('0')
+                            if ($component.Length -eq 0) {
+                                $component = '0'
                             }
-                        }
-                    } catch {
-                        Write-Warning "Could not search manifests directory: $_"
-                    }
-                }
-            } # End of else block for non-VersionSource path
-            
-            if ($foundPackages.Count -eq 0) {
-                Write-Warning "Package '$App' not found in WinGet repository."
-                throw "Package not found: $App"
-            }
-            
-            Write-Verbose "Found $($foundPackages.Count) potential package(s)"
-            
-            # Process each found package
-            foreach ($package in $foundPackages) {
-                Write-Verbose "Processing package: $($package.PackageId)"
-                
-                try {
-                    # Get version directories
-                    Write-Verbose "Retrieving version folders..."
-                    $versionContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $package.Path -ErrorAction Stop
-
-                    # Handle PowerShellForGitHub returning different structures
-                    $versionDirs = if ($versionContent -is [array]) {
-                        $versionContent
-                    } elseif ($versionContent.entries) {
-                        # PowerShellForGitHub returns directory contents in 'entries' property
-                        $versionContent.entries
+                            '{0:D10}:{1}' -f $component.Length, $component
+                        }) -join '.'
                     } else {
-                        @() # Empty array if no content
+                        # No leading numeric portion: sort by raw name
+                        $_.name
                     }
-                    
-                    if (-not $versionDirs -or $versionDirs.Count -eq 0) {
-                        Write-Verbose "No version directories found for $($package.PackageId)"
-                        continue
-                    }
-                    
-                    if ($package.Path -eq 'manifests/m/Mozilla/Firefox') {
-                        $versionDirs = $versionDirs | Where-Object { $_.name -match '^([\d]+(?:\.[\d]+)*)' }
-                    }
+                }
+            } -Descending)
 
-                    # Sort versions and get the latest
-                    Write-Verbose "Found $($versionDirs.Count) versions. Determining latest version..."
-                    $ignoreFolders = 'X|VideoCapture|Telegraph|WiiBalanceBoard|Extension|Module|CN|.validation|Preview|Nightly|Beta|Alpha|Experimental|Canary|Dev|Test|RC|ReleaseCandidate|LTS|EXE'
-                    $sortedVersions = $versionDirs |
-                    Where-Object { $_.type -eq 'dir' -and $_.name -notmatch $ignoreFolders } |
-                    Sort-Object -Property @{
-                        Expression = {
-                            # Extract the numeric prefix (e.g. "1.2.69.448" from "1.2.69.448.ge76b8882")
-                            if ($_.name -match '^([\d]+(?:\.[\d]+)*)') {
-                                $numeric = $Matches[1]
-                                try {
-                                    # Use Version on the pure numeric string
-                                    [Version]$numeric
-                                } catch {
-                                    # Fallback if the numeric string isn't a valid Version
-                                    $_.name
-                                }
-                            } else {
-                                # No leading numeric portion: sort by raw name
-                                $_.name
-                            }
-                        }
-                    } -Descending
-                    
-                    if (-not $sortedVersions -or $sortedVersions.Count -eq 0) {
-                        Write-Verbose "No valid versions found for $($package.PackageId)"
-                        continue
-                    }
-                    
-                    $latestVersion = $sortedVersions[0]
-                    Write-Verbose "Latest version: $($latestVersion.name)"
-                    
-                    # Starting from the most recent version, find the first with a valid installer manifest
-                    for ($i = 0; $i -lt $sortedVersions.Count; $i++) {
-                    
-                        $checkVersion = $sortedVersions[$i]
-                        Write-Verbose "Checking version: $($checkVersion.name)"
-                    
-                        # Get manifest files for the latest version
-                        $versionPath = $package.Path + "/" + $checkVersion.name
-                        Write-Verbose "Fetching installer manifest: $versionPath/$($package.PackageId).installer.yaml"
-                    
-                        $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
-                    
-                        # Handle PowerShellForGitHub structure for manifest files
-                        $manifestFiles = if ($manifestContent -is [array]) {
-                            $manifestContent
-                        }
-                        elseif ($manifestContent.entries) {
-                            $manifestContent.entries
-                        }
-                        else {
-                            @()
-                        }
-                    
-                        # Find the manifest files
-                        $installerManifest = $manifestFiles | Where-Object { $_.name -like '*installer.yaml' } | Select-Object -First 1
-                        $defaultManifest = $manifestFiles | Where-Object { $_.name -like '*.yaml' -and $_.name -notlike '*installer.yaml' -and $_.name -notlike '*.locale.*.yaml' } | Select-Object -First 1
-                        $localeManifest = $manifestFiles | Where-Object { $_.name -like '*.locale.en-US.yaml' } | Select-Object -First 1
-                    
-                        # If installer manifest found, break the loop
-                        if ($installerManifest) {
-                            break
-                        }
+            if (-not $sortedVersions -or $sortedVersions.Count -eq 0) {
+                Write-Verbose "No valid versions found for $($package.PackageId)"
+                continue
+            }
 
-                        # No installer manifest found for this version
-                        if ($i -lt ($sortedVersions.Count - 1)) {
-                            Write-Verbose "No installer manifest found for version $($checkVersion.name), checking next version..."
-                        }
-                        else {
-                            Write-Verbose "No installer manifest found for any version of $($package.PackageId)"
-                        }
-                    }
+            $latestVersion = $sortedVersions[0]
+            Write-Verbose "Latest version: $($latestVersion.name)"
 
-                    # Ensure we have an installer manifest
-                    if (-not $installerManifest) {
-                        Write-Warning "Package '$($package.PackageId)' exists but no version has a valid installer manifest."
-                        continue
-                    }
-                    
-                    # Download and parse the manifests
-                    Write-Verbose "Parsing YAML manifest..."
-                    
-                    # Parse installer manifest
-                    $installerContent = Invoke-RestMethod -Uri $installerManifest.download_url -ErrorAction Stop
-                    $installerData = ConvertFrom-Yaml -Yaml $installerContent -ErrorAction Stop
-                    
-                    # Parse default manifest for package metadata
-                    $packageData = @{}
-                    if ($defaultManifest) {
-                        try {
-                            $defaultContent = Invoke-RestMethod -Uri $defaultManifest.download_url -ErrorAction Stop
-                            $packageData = ConvertFrom-Yaml -Yaml $defaultContent -ErrorAction Stop
-                        } catch {
-                            Write-Verbose "Could not parse default manifest: $_"
-                        }
-                    }
-                    
-                    # Parse locale manifest for additional metadata
-                    $localeData = @{}
-                    if ($localeManifest) {
-                        try {
-                            $localeContent = Invoke-RestMethod -Uri $localeManifest.download_url -ErrorAction Stop
-                            $localeData = ConvertFrom-Yaml -Yaml $localeContent -ErrorAction Stop
-                        } catch {
-                            Write-Verbose "Could not parse locale manifest: $_"
-                        }
-                    }
-                    
-                    # Build metadata from locale (preferred) or default manifest
-                    $metadataFields = @(
-                        'PackageName', 'Publisher', 'PublisherUrl', 'PublisherSupportUrl',
-                        'PrivacyUrl', 'Author', 'License', 'LicenseUrl',
-                        'Copyright', 'CopyrightUrl', 'ShortDescription', 'Description',
-                        'Moniker', 'Tags', 'ReleaseNotes', 'ReleaseNotesUrl'
-                    )
-                    $metadataProps = [ordered]@{
-                        PackageIdentifier = $installerData.PackageIdentifier
-                        PackageVersion    = $installerData.PackageVersion
-                    }
-                    foreach ($field in $metadataFields) {
-                        $metadataProps[$field] = if ($localeData[$field]) { $localeData[$field] }
-                                                 elseif ($packageData[$field]) { $packageData[$field] }
-                                                 else { $null }
-                    }
-                    $metadataProps['Installers'] = @()
-                    $result = [PSCustomObject]$metadataProps
-                    if (-not $result.Tags) { $result.Tags = @() }
-                    
-                    # Process installers
-                    $installers = if ($installerData.Installers) { $installerData.Installers } else { @($installerData) }
-                    Write-Verbose "Found $($installers.Count) installers in manifest"
-                    
-                    $installerObjects = [System.Collections.Generic.List[object]]::new()
-                    foreach ($installer in $installers) {
-                        $installerObj = [PSCustomObject]@{
-                            Architecture      = $installer.Architecture
-                            InstallerType     = if ($installer.InstallerType) { $installer.InstallerType } else { $installerData.InstallerType }
-                            InstallerUrl      = $installer.InstallerUrl
-                            InstallerSha256   = $installer.InstallerSha256
-                            Scope             = if ($installer.Scope) { $installer.Scope } else { $installerData.Scope }
-                            InstallerSwitches = if ($installer.InstallerSwitches) { $installer.InstallerSwitches } else { $installerData.InstallerSwitches }
-                            UpgradeBehavior   = if ($installer.UpgradeBehavior) { $installer.UpgradeBehavior } else { $installerData.UpgradeBehavior }
-                            Dependencies      = if ($installer.Dependencies) { $installer.Dependencies } else { $installerData.Dependencies }
-                            ProductCode       = $installer.ProductCode
-                            FileExtensions    = if ($installer.FileExtensions) { $installer.FileExtensions } else { $installerData.FileExtensions }
-                            Protocols         = if ($installer.Protocols) { $installer.Protocols } else { $installerData.Protocols }
-                            Commands          = if ($installer.Commands) { $installer.Commands } else { $installerData.Commands }
-                            InstallerLocale   = if ($installer.InstallerLocale) { $installer.InstallerLocale } else { $installerData.InstallerLocale }
-                        }
-                        $installerObjects.Add($installerObj)
-                    }
-                    
-                    # Add installers to result
-                    $result.Installers = $installerObjects
-                    
-                    $packageResults.Add($result)
-                    
-                } catch {
-                    Write-Warning "Error processing package $($package.PackageId): $_"
-                    Write-Verbose "Full error: $($_.Exception.Message)"
-                    continue
+            # Starting from the most recent version, find the first with a valid installer manifest
+            for ($i = 0; $i -lt $sortedVersions.Count; $i++) {
+
+                $checkVersion = $sortedVersions[$i]
+                Write-Verbose "Checking version: $($checkVersion.name)"
+
+                # Get manifest files for the latest version
+                $versionPath = $package.Path + "/" + $checkVersion.name
+                Write-Verbose "Fetching installer manifest: $versionPath/$($package.PackageId).installer.yaml"
+
+                $manifestContent = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $versionPath -ErrorAction Stop
+
+                $manifestFiles = @($manifestContent.Entries)
+
+                # Find the manifest files
+                $installerManifest = $manifestFiles | Where-Object { $_.name -like '*installer.yaml' } | Select-Object -First 1
+                $defaultManifest = $manifestFiles | Where-Object { $_.name -like '*.yaml' -and $_.name -notlike '*installer.yaml' -and $_.name -notlike '*.locale.*.yaml' } | Select-Object -First 1
+                $localeManifest = $manifestFiles | Where-Object { $_.name -like '*.locale.en-US.yaml' } | Select-Object -First 1
+
+                # If installer manifest found, break the loop
+                if ($installerManifest) {
+                    break
+                }
+
+                # No installer manifest found for this version
+                if ($i -lt ($sortedVersions.Count - 1)) {
+                    Write-Verbose "No installer manifest found for version $($checkVersion.name), checking next version..."
+                }
+                else {
+                    Write-Verbose "No installer manifest found for any version of $($package.PackageId)"
                 }
             }
-            
-        } catch {
-            if ($_.Exception.Message -like "*Package not found*") {
-                throw $_
-            } else {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    $_.Exception,
-                    'ApplicationSearchError',
-                    [System.Management.Automation.ErrorCategory]::NotSpecified,
-                    $App
-                ))
-                throw
+
+            # Ensure we have an installer manifest
+            if (-not $installerManifest) {
+                Write-Warning "Package '$($package.PackageId)' exists but no version has a valid installer manifest."
+                continue
             }
-        }
-    }
-    
-    end {
-        if ($packageResults.Count -eq 0) {
-            Write-Warning "Package '$App' not found in the WinGet repository. Please verify the package identifier is correct."
-            Write-Verbose "Search completed with no results. The package may not exist, or may have been removed from the repository."
-        } else {
-            # Cache the result before returning
-            $result = $packageResults[0]
+
+            # Download and parse the manifests
+            Write-Verbose "Parsing YAML manifest..."
+
+            # Parse installer manifest
+            $installerContent = Invoke-RestMethod -Uri $installerManifest.download_url -ErrorAction Stop
+            $installerData = ConvertFrom-Yaml -Yaml $installerContent -ErrorAction Stop
+
+            # Parse default manifest for package metadata
+            $packageData = @{}
+            if ($defaultManifest) {
+                try {
+                    $defaultContent = Invoke-RestMethod -Uri $defaultManifest.download_url -ErrorAction Stop
+                    $packageData = ConvertFrom-Yaml -Yaml $defaultContent -ErrorAction Stop
+                } catch {
+                    Write-Verbose "Could not parse default manifest: $_"
+                }
+            }
+
+            # Parse locale manifest for additional metadata
+            $localeData = @{}
+            if ($localeManifest) {
+                try {
+                    $localeContent = Invoke-RestMethod -Uri $localeManifest.download_url -ErrorAction Stop
+                    $localeData = ConvertFrom-Yaml -Yaml $localeContent -ErrorAction Stop
+                } catch {
+                    Write-Verbose "Could not parse locale manifest: $_"
+                }
+            }
+
+            # Build metadata from locale (preferred) or default manifest
+            $metadataFields = @(
+                'PackageName', 'Publisher', 'PublisherUrl', 'PublisherSupportUrl',
+                'PrivacyUrl', 'Author', 'License', 'LicenseUrl',
+                'Copyright', 'CopyrightUrl', 'ShortDescription', 'Description',
+                'Moniker', 'Tags', 'ReleaseNotes', 'ReleaseNotesUrl'
+            )
+            $metadataProps = [ordered]@{
+                PackageIdentifier = $installerData.PackageIdentifier
+                PackageVersion    = $installerData.PackageVersion
+            }
+            foreach ($field in $metadataFields) {
+                $metadataProps[$field] = if ($localeData[$field]) { $localeData[$field] }
+                                         elseif ($packageData[$field]) { $packageData[$field] }
+                                         else { $null }
+            }
+            $metadataProps['Installers'] = @()
+            $result = [PSCustomObject]$metadataProps
+            if (-not $result.Tags) { $result.Tags = @() }
+
+            # Process installers
+            $installers = if ($installerData.Installers) { $installerData.Installers } else { @($installerData) }
+            Write-Verbose "Found $($installers.Count) installers in manifest"
+
+            $installerObjects = [System.Collections.Generic.List[object]]::new()
+            foreach ($installer in $installers) {
+                $installerObj = [PSCustomObject]@{
+                    Architecture      = $installer.Architecture
+                    InstallerType     = if ($installer.InstallerType) { $installer.InstallerType } else { $installerData.InstallerType }
+                    InstallerUrl      = $installer.InstallerUrl
+                    InstallerSha256   = $installer.InstallerSha256
+                    Scope             = if ($installer.Scope) { $installer.Scope } else { $installerData.Scope }
+                    InstallerSwitches = if ($installer.InstallerSwitches) { $installer.InstallerSwitches } else { $installerData.InstallerSwitches }
+                    UpgradeBehavior   = if ($installer.UpgradeBehavior) { $installer.UpgradeBehavior } else { $installerData.UpgradeBehavior }
+                    Dependencies      = if ($installer.Dependencies) { $installer.Dependencies } else { $installerData.Dependencies }
+                    ProductCode       = $installer.ProductCode
+                    FileExtensions    = if ($installer.FileExtensions) { $installer.FileExtensions } else { $installerData.FileExtensions }
+                    Protocols         = if ($installer.Protocols) { $installer.Protocols } else { $installerData.Protocols }
+                    Commands          = if ($installer.Commands) { $installer.Commands } else { $installerData.Commands }
+                    InstallerLocale   = if ($installer.InstallerLocale) { $installer.InstallerLocale } else { $installerData.InstallerLocale }
+                }
+                $installerObjects.Add($installerObj)
+            }
+
+            # Add installers to result
+            $result.Installers = $installerObjects
+
             Set-CacheItem -Key $cacheKey -Data $result
-            
-            # Return the first result (should typically be only one)
             return $result
+
+        } catch {
+            if (-not $firstError) {
+                $firstError = $_
+            }
+            Write-Warning "Error processing package $($package.PackageId): $_"
+            Write-Verbose "Full error: $($_.Exception.Message)"
+            continue
         }
     }
+
+    if ($firstError) {
+        $PSCmdlet.ThrowTerminatingError($firstError)
+    }
+
+    $exception = [System.Management.Automation.ItemNotFoundException]::new("Package not found: $App", $notFoundCause)
+    $errorRecord = [System.Management.Automation.ErrorRecord]::new(
+        $exception,
+        'PackageNotFound',
+        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+        $App
+    )
+    $PSCmdlet.ThrowTerminatingError($errorRecord)
 }

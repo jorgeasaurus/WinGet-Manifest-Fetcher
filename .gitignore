@@ -2,6 +2,7 @@
 output/
 build/
 release/
+.build/
 
 # Development
 *.bak
@@ -51,3 +52,5 @@ blog-post-*.md
 Examples/AllLatestVersionsReport.ps1
 Examples/AllLatestVersionReport-Parallel.ps1
 WinGetManifestFetcher-review.md
+tasks/lessons.md
+tasks/todo.md

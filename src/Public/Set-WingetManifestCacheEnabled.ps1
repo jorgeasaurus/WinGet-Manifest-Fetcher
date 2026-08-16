@@ -29,12 +29,7 @@ function Set-WingetManifestCacheEnabled {
                 New-Item -ItemType Directory -Path $script:CacheDirectory -Force | Out-Null
                 Write-Verbose "Cache enabled at: $script:CacheDirectory"
             } catch {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    $_.Exception,
-                    'CacheDirectoryCreateFailed',
-                    [System.Management.Automation.ErrorCategory]::WriteError,
-                    $script:CacheDirectory
-                ))
+                Write-Error -Exception $_.Exception -ErrorId CacheDirectoryCreateFailed -Category WriteError -TargetObject $script:CacheDirectory
                 $script:CacheEnabled = $false
             }
         } else {

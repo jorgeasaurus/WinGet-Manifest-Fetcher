@@ -5,35 +5,107 @@ on:
     branches:
       - main
   workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
 jobs:
-  build:
+  validate:
     runs-on: windows-latest
     steps:
-      # Get the current version
-      - uses: actions/checkout@v3
-      - name: Install and cache PowerShell modules
-        id: psmodulecache
-        uses: potatoqualitee/psmodulecache@v6.2.1
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          modules-to-cache: BuildHelpers
-      - shell: pwsh
-        # Give an id to the step, so we can reference it later
-        id: check_if_versions_bumped
-        run: |
-          [version]$GalleryVersion = Get-NextNugetPackageVersion -Name WinGetManifestFetcher -ErrorAction Stop
-          [version]$GithubVersion = Get-MetaData -Path ./src/WinGetManifestFetcher.psd1 -PropertyName ModuleVersion -ErrorAction Stop
-          $bumped = $GithubVersion -ge $GalleryVersion
+          persist-credentials: false
 
-          # Set the output named "version_bumped" using environment files
-          if ($bumped) {
-              "version_bumped=true" >> $env:GITHUB_OUTPUT
-          } else {
-              "version_bumped=false" >> $env:GITHUB_OUTPUT
+      - name: Build, test, and analyze
+        shell: pwsh
+        run: ./build.ps1 -Task Build,Test,Analyze -Bootstrap
+
+      - name: Validate Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./build.ps1 -Task Test -Bootstrap
+          if ($PSVersionTable.PSVersion.Major -ne 5) {
+            throw "Expected Windows PowerShell 5.1, found $($PSVersionTable.PSVersion)"
+          }
+          $manifestPath = './output/WinGetManifestFetcher/WinGetManifestFetcher.psd1'
+          $manifest = Test-ModuleManifest $manifestPath
+          Import-Module $manifestPath -Force
+          $expected = @($manifest.ExportedFunctions.Keys | Sort-Object)
+          $actual = @((Get-Command -Module WinGetManifestFetcher).Name | Sort-Object)
+          if (Compare-Object $expected $actual) {
+            throw "Windows PowerShell exports do not match the manifest: $($actual -join ', ')"
           }
 
-      - name: Publish to PSGallery
+      - name: Upload validated module
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: validated-module
+          path: output
+          if-no-files-found: error
+          retention-days: 1
+
+  integration:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: validate
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download validated module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-module
+          path: output
+
+      - name: Run bounded live integration tests
         shell: pwsh
-        if: steps.check_if_versions_bumped.outputs.version_bumped == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./build.ps1 -Task Integration -Bootstrap
+
+  publish:
+    if: >-
+      always() &&
+      github.event_name != 'schedule' &&
+      needs.validate.result == 'success' &&
+      (github.event_name == 'push' || needs.integration.result == 'success')
+    needs:
+      - validate
+      - integration
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Download validated module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: validated-module
+          path: output
+
+      - name: Check whether the module version is new
+        id: version_check
+        shell: pwsh
+        run: |
+          [version] $repositoryVersion = Import-PowerShellDataFile ./output/WinGetManifestFetcher/WinGetManifestFetcher.psd1 |
+            Select-Object -ExpandProperty ModuleVersion
+          $publishedModule = Find-Module -Name WinGetManifestFetcher -Repository PSGallery -ErrorAction Stop
+          $shouldPublish = $repositoryVersion -gt [version] $publishedModule.Version
+          "should_publish=$($shouldPublish.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Publish to PSGallery
+        if: steps.version_check.outputs.should_publish == 'true'
+        shell: pwsh
         env:
           PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
         run: ./build.ps1 -Task Publish -Bootstrap

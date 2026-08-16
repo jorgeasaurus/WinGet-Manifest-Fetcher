@@ -198,6 +198,73 @@ Describe "Set-CacheItem" {
                 $content.Data.Value | Should -Be 456
             }
         }
+
+        It "Should preserve the old entry until an atomic replacement commits" {
+            InModuleScope WinGetManifestFetcher {
+                Set-CacheItem -Key 'test_key' -Data @{ Name = 'Old'; Value = 1 }
+                $cacheFile = Join-Path $script:CacheDirectory 'test_key.json'
+
+                Mock Complete-WingetAtomicFileWrite {
+                    param($TemporaryPath, $DestinationPath)
+                    $script:observedFinal = (Get-Content -LiteralPath $DestinationPath -Raw | ConvertFrom-Json).Data.Name
+                    $script:observedTemporary = (Get-Content -LiteralPath $TemporaryPath -Raw | ConvertFrom-Json).Data.Name
+                    throw 'replacement failed'
+                }
+
+                Set-CacheItem -Key 'test_key' -Data @{ Name = 'New'; Value = 2 }
+
+                $script:observedFinal | Should -Be 'Old'
+                $script:observedTemporary | Should -Be 'New'
+                (Get-CacheItem -Key 'test_key').Name | Should -Be 'Old'
+                @(Get-ChildItem -LiteralPath $script:CacheDirectory -Filter '*.tmp') | Should -HaveCount 0
+            }
+        }
+
+        It "Should expose only complete JSON during concurrent replacements" {
+            InModuleScope WinGetManifestFetcher {
+                Set-CacheItem -Key 'concurrent_key' -Data @{ Writer = 0; Payload = 'seed' }
+            }
+
+            $cacheFile = Join-Path $script:testCacheDirectory 'concurrent_key.json'
+            $jobs = 1..3 | ForEach-Object {
+                Start-Job -ArgumentList $modulePath, $script:testCacheDirectory, $_ -ScriptBlock {
+                    param($ModulePath, $CacheDirectory, $Writer)
+                    Import-Module $ModulePath -Force
+                    $module = Get-Module WinGetManifestFetcher
+                    & $module {
+                        param($Directory, $WriterId)
+                        $script:CacheDirectory = $Directory
+                        $script:CacheEnabled = $true
+                        Set-CacheItem -Key 'concurrent_key' -Data @{
+                            Writer = $WriterId
+                            Payload = ('x' * 2000000)
+                        }
+                    } $CacheDirectory $Writer
+                }
+            }
+
+            $parseFailures = [System.Collections.Generic.List[string]]::new()
+            try {
+                while (@($jobs | Where-Object { $_.State -eq 'NotStarted' -or $_.State -eq 'Running' }).Count -gt 0) {
+                    try {
+                        $entry = Get-Content -LiteralPath $cacheFile -Raw | ConvertFrom-Json
+                        if ($null -eq $entry.Data.Writer) {
+                            $parseFailures.Add('missing writer')
+                        }
+                    } catch {
+                        $parseFailures.Add($_.Exception.Message)
+                    }
+                    Start-Sleep -Milliseconds 5
+                }
+                $jobs | Wait-Job | Receive-Job | Out-Null
+            } finally {
+                $jobs | Remove-Job -Force -ErrorAction SilentlyContinue
+            }
+
+            $parseFailures | Should -HaveCount 0
+            (Get-Content -LiteralPath $cacheFile -Raw | ConvertFrom-Json).Data.Writer | Should -BeIn @(1, 2, 3)
+            @(Get-ChildItem -LiteralPath $script:testCacheDirectory -Filter '*.tmp') | Should -HaveCount 0
+        }
     }
 }
 
@@ -224,6 +291,13 @@ Describe "Clear-WingetManifestCache" {
             # Verify files are gone
             $files = Get-ChildItem -Path $script:testCacheDirectory -Filter "*.json" -ErrorAction SilentlyContinue
             $files.Count | Should -Be 0
+        }
+
+        It "Should preserve cache files with -Force -WhatIf" {
+            Clear-WingetManifestCache -Force -WhatIf
+
+            $files = Get-ChildItem -Path $script:testCacheDirectory -Filter "*.json"
+            $files.Count | Should -Be 5
         }
     }
     
@@ -308,13 +382,20 @@ Describe "Set-WingetManifestCacheEnabled" {
     }
 }
 
-Describe "Integration: Caching with Get-LatestWingetVersion" -Tag "Integration" {
+Describe "Caching with Get-LatestWingetVersion" {
     BeforeAll {
+        Mock -ModuleName WinGetManifestFetcher Get-WingetPackageVersionEntry {
+            @(@{ name = '23.01'; type = 'dir' })
+        }
+
         # Mock Get-GitHubContent to avoid actual API calls
-        Mock Get-GitHubContent {
+        Mock -ModuleName WinGetManifestFetcher Get-GitHubContent {
+            param($Path)
+
             # Return mock data based on the path
             if ($Path -like "*manifests/7/7zip/7zip") {
                 return @{
+                    type = "dir"
                     entries = @(
                         @{ name = "23.01"; type = "dir" }
                     )
@@ -328,11 +409,11 @@ Describe "Integration: Caching with Get-LatestWingetVersion" -Tag "Integration" 
                 }
             }
             else {
-                throw "Not found"
+                throw "Not found: $Path"
             }
         }
         
-        Mock Invoke-RestMethod {
+        Mock -ModuleName WinGetManifestFetcher Invoke-RestMethod {
             # Return mock YAML content
             return @"
 PackageIdentifier: 7zip.7zip
@@ -345,7 +426,7 @@ Installers:
 "@
         }
         
-        Mock ConvertFrom-Yaml {
+        Mock -ModuleName WinGetManifestFetcher ConvertFrom-Yaml {
             return @{
                 PackageIdentifier = "7zip.7zip"
                 PackageVersion = "23.01"
@@ -372,9 +453,8 @@ Installers:
         $result1 | Should -Not -BeNullOrEmpty
         
         # Verify cache file was created
-        $cacheKey = "package_7zip.7zip"
-        $cacheFile = Join-Path -Path $script:testCacheDirectory -ChildPath "$cacheKey.json"
-        Test-Path -Path $cacheFile | Should -BeTrue
+        $cacheFiles = @(Get-ChildItem -Path $script:testCacheDirectory -Filter "package_7zip.7zip_*.json")
+        $cacheFiles | Should -HaveCount 1
         
         # Second call should use cache (mock should not be called again)
         $result2 = Get-LatestWingetVersion -App "7zip.7zip"

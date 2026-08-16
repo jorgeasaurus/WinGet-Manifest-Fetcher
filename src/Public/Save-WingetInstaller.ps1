@@ -69,199 +69,98 @@ function Save-WingetInstaller {
         [switch]$PassThru
     )
     
-    begin {
-        # Ensure the target directory exists
-        if (-not (Test-Path -Path $Path)) {
-            if ($PSCmdlet.ShouldProcess($Path, "Create directory")) {
-                $null = New-Item -ItemType Directory -Path $Path -Force
-            }
-        }
-        
-        # Get the absolute path
-        $Path = Resolve-Path -Path $Path
+    Write-Verbose "Getting package information for '$App'..."
+    $package = Get-LatestWingetVersion -App $App -ErrorAction Stop
+    if (-not $package.Installers) {
+        Write-Error -Exception ([System.Exception]::new("No installers found for package '$App'")) -ErrorId NoInstallersFound -Category ObjectNotFound -TargetObject $App -ErrorAction Stop
     }
-    
-    process {
+
+    $availableInstallers = @($package.Installers)
+    if ($Architecture) {
+        $availableInstallers = @($availableInstallers | Where-Object { $_.Architecture -eq $Architecture })
+        if ($availableInstallers.Count -eq 0) {
+            Write-Error -Exception ([System.Exception]::new("No installer found for architecture '$Architecture'")) -ErrorId ArchitectureNotFound -Category ObjectNotFound -TargetObject $Architecture -ErrorAction Stop
+        }
+    }
+    if ($InstallerType) {
+        $availableInstallers = @($availableInstallers | Where-Object { $_.InstallerType -eq $InstallerType })
+        if ($availableInstallers.Count -eq 0) {
+            Write-Error -Exception ([System.Exception]::new("No installer found for type '$InstallerType'")) -ErrorId InstallerTypeNotFound -Category ObjectNotFound -TargetObject $InstallerType -ErrorAction Stop
+        }
+    }
+
+    $installer = $availableInstallers | Sort-Object @{ Expression = {
+        switch ($_.Architecture) { 'x64' { 0 }; 'x86' { 1 }; default { 2 } }
+    } } | Select-Object -First 1
+    $uri = [Uri]$installer.InstallerUrl
+    if (-not $uri.IsAbsoluteUri -or $uri.Scheme -ne [Uri]::UriSchemeHttps) {
+        Write-Error -Exception ([System.Security.SecurityException]::new("Installer URL must use HTTPS: $($installer.InstallerUrl)")) -ErrorId InsecureInstallerUrl -Category SecurityError -TargetObject $installer.InstallerUrl -ErrorAction Stop
+    }
+    if (-not $SkipHashValidation -and [string]::IsNullOrWhiteSpace($installer.InstallerSha256)) {
+        Write-Error -Exception ([System.Security.SecurityException]::new('Installer manifest does not provide a SHA256 hash. Use -SkipHashValidation to download without verification.')) -ErrorId InstallerHashMissing -Category SecurityError -TargetObject $installer.InstallerUrl -ErrorAction Stop
+    }
+
+    $filename = [IO.Path]::GetFileName($uri.LocalPath)
+    if (-not [IO.Path]::GetExtension($filename)) {
+        $extension = switch ($installer.InstallerType) {
+            'msi' { '.msi' }
+            'msix' { '.msix' }
+            'zip' { '.zip' }
+            default { '.exe' }
+        }
+        $filename = "$($package.PackageIdentifier)_$($package.PackageVersion)_$($installer.Architecture)$extension"
+    }
+
+    $destinationPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    $outputPath = Join-Path -Path $destinationPath -ChildPath $filename
+    if ((Test-Path -LiteralPath $outputPath) -and -not $Force) {
+        Write-Error -Exception ([IO.IOException]::new("File already exists: $outputPath. Use -Force to overwrite.")) -ErrorId FileExists -Category ResourceExists -TargetObject $outputPath -ErrorAction Stop
+    }
+
+    if (-not (Test-Path -LiteralPath $destinationPath -PathType Container)) {
+        if ($PSCmdlet.ShouldProcess($destinationPath, 'Create directory')) {
+            $null = New-Item -ItemType Directory -Path $destinationPath -Force
+        } elseif (-not $WhatIfPreference) {
+            return
+        }
+    }
+    if (-not $PSCmdlet.ShouldProcess($installer.InstallerUrl, "Download to $outputPath")) {
+        return
+    }
+
+    $temporaryPath = Join-Path -Path $destinationPath -ChildPath ".$filename.$([Guid]::NewGuid().ToString('N')).download"
+    try {
         try {
-            Write-Verbose "Getting package information for '$App'..."
-            
-            # Get the package information
-            $package = Get-LatestWingetVersion -App $App -ErrorAction Stop
-            
-            if (-not $package) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("Package '$App' not found"),
-                    'PackageNotFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $App
-                ))
-                return
-            }
-            
-            if (-not $package.Installers -or $package.Installers.Count -eq 0) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No installers found for package '$App'"),
-                    'NoInstallersFound',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $App
-                ))
-                return
-            }
-            
-            # Filter installers based on criteria
-            $availableInstallers = @($package.Installers)
-            
-            # Filter by architecture if specified
-            if ($Architecture) {
-                $availableInstallers = $availableInstallers | Where-Object { $_.Architecture -eq $Architecture }
-                if (-not $availableInstallers) {
-                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("No installer found for architecture '$Architecture'"),
-                        'ArchitectureNotFound',
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $Architecture
-                    ))
-                    return
-                }
-            }
-            
-            # Filter by installer type if specified
-            if ($InstallerType) {
-                $availableInstallers = $availableInstallers | Where-Object { $_.InstallerType -eq $InstallerType }
-                if (-not $availableInstallers) {
-                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("No installer found for type '$InstallerType'"),
-                        'InstallerTypeNotFound',
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $InstallerType
-                    ))
-                    return
-                }
-            }
-            
-            # Select the best installer
-            $installer = if ($availableInstallers -is [array]) {
-                # Prefer x64, then x86, then arm64
-                $preferred = $availableInstallers | Where-Object { $_.Architecture -eq 'x64' } | Select-Object -First 1
-                if (-not $preferred) {
-                    $preferred = $availableInstallers | Where-Object { $_.Architecture -eq 'x86' } | Select-Object -First 1
-                }
-                if (-not $preferred) {
-                    $preferred = $availableInstallers | Select-Object -First 1
-                }
-                $preferred
+            if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
+                Start-BitsTransfer -Source $installer.InstallerUrl -Destination $temporaryPath -Description "Downloading $($package.PackageName)"
             } else {
-                $availableInstallers
-            }
-            
-            if (-not $installer) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.Exception]::new("No suitable installer found"),
-                    'NoSuitableInstaller',
-                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                    $App
-                ))
-                return
-            }
-            
-            # Construct filename
-            $uri = [Uri]$installer.InstallerUrl
-            $filename = [System.IO.Path]::GetFileName($uri.LocalPath)
-            
-            # If no extension in URL, try to determine from installer type
-            if (-not [System.IO.Path]::GetExtension($filename)) {
-                $extension = switch ($installer.InstallerType) {
-                    'exe' { '.exe' }
-                    'msi' { '.msi' }
-                    'msix' { '.msix' }
-                    'zip' { '.zip' }
-                    default { '.exe' }
-                }
-                $filename = "$($package.PackageIdentifier)_$($package.PackageVersion)_$($installer.Architecture)$extension"
-            }
-            
-            $outputPath = Join-Path -Path $Path -ChildPath $filename
-            
-            # Check if file already exists
-            if ((Test-Path -Path $outputPath) -and -not $Force) {
-                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                    [System.IO.IOException]::new("File already exists: $outputPath. Use -Force to overwrite."),
-                    'FileExists',
-                    [System.Management.Automation.ErrorCategory]::ResourceExists,
-                    $outputPath
-                ))
-                return
-            }
-            
-            # Download the file
-            if ($PSCmdlet.ShouldProcess($installer.InstallerUrl, "Download to $outputPath")) {
-                Write-Verbose "Downloading $($package.PackageName) $($package.PackageVersion) ($($installer.Architecture))..."
-                Write-Verbose "URL: $($installer.InstallerUrl)"
-                Write-Verbose "Destination: $outputPath"
-                
-                try {
-                    # Use BITS if available (Windows), otherwise use WebClient
-                    if (Get-Command -Name Start-BitsTransfer -ErrorAction SilentlyContinue) {
-                        Start-BitsTransfer -Source $installer.InstallerUrl -Destination $outputPath -Description "Downloading $($package.PackageName)"
-                    } else {
-                        Invoke-WebRequest -Uri $installer.InstallerUrl -OutFile $outputPath -UseBasicParsing
-                    }
-                    
-                    Write-Verbose "Download complete: $outputPath"
-                } catch {
-                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                        $_.Exception,
-                        'DownloadFailed',
-                        [System.Management.Automation.ErrorCategory]::ConnectionError,
-                        $installer.InstallerUrl
-                    ))
-                    return
-                }
-                
-                # Verify hash if not skipped
-                if (-not $SkipHashValidation -and $installer.InstallerSha256) {
-                    Write-Verbose "Verifying hash..."
-                    Write-Verbose "Expected SHA256: $($installer.InstallerSha256)"
-                    
-                    $actualHash = (Get-FileHash -Path $outputPath -Algorithm SHA256).Hash
-                    Write-Verbose "Actual SHA256: $actualHash"
-                    
-                    if ($actualHash -eq $installer.InstallerSha256) {
-                        Write-Verbose "Hash verification successful"
-                    } else {
-                        $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                            [System.Exception]::new("Hash verification failed. Expected: $($installer.InstallerSha256), Actual: $actualHash"),
-                            'HashMismatch',
-                            [System.Management.Automation.ErrorCategory]::SecurityError,
-                            $outputPath
-                        ))
-                        
-                        # Remove the potentially corrupted file
-                        Remove-Item -Path $outputPath -Force
-                        return
-                    }
-                } elseif ($SkipHashValidation) {
-                    Write-Warning "Hash validation skipped. The file integrity has not been verified."
-                } else {
-                    Write-Warning "No hash available in manifest. Cannot verify file integrity."
-                }
-                
-                # Return file info if requested
-                if ($PassThru) {
-                    Get-Item -Path $outputPath | Add-Member -MemberType NoteProperty -Name 'PackageId' -Value $package.PackageIdentifier -PassThru |
-                    Add-Member -MemberType NoteProperty -Name 'PackageVersion' -Value $package.PackageVersion -PassThru |
-                    Add-Member -MemberType NoteProperty -Name 'Architecture' -Value $installer.Architecture -PassThru |
-                    Add-Member -MemberType NoteProperty -Name 'InstallerType' -Value $installer.InstallerType -PassThru |
-                    Add-Member -MemberType NoteProperty -Name 'HashVerified' -Value (-not $SkipHashValidation -and $installer.InstallerSha256) -PassThru
-                }
+                Invoke-WebRequest -Uri $installer.InstallerUrl -OutFile $temporaryPath -UseBasicParsing
             }
         } catch {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                $_.Exception,
-                'InstallerDownloadError',
-                [System.Management.Automation.ErrorCategory]::NotSpecified,
-                $App
-            ))
+            Write-Error -Exception $_.Exception -ErrorId DownloadFailed -Category ConnectionError -TargetObject $installer.InstallerUrl -ErrorAction Stop
+        }
+
+        if ($SkipHashValidation) {
+            Write-Warning 'Hash validation skipped. The file integrity has not been verified.'
+        } else {
+            $actualHash = (Get-FileHash -LiteralPath $temporaryPath -Algorithm SHA256).Hash
+            if ($actualHash -ne $installer.InstallerSha256) {
+                Write-Error -Exception ([System.Security.SecurityException]::new("Hash verification failed. Expected: $($installer.InstallerSha256), Actual: $actualHash")) -ErrorId HashMismatch -Category SecurityError -TargetObject $temporaryPath -ErrorAction Stop
+            }
+        }
+
+        Complete-WingetAtomicFileWrite -TemporaryPath $temporaryPath -DestinationPath $outputPath -ReplaceExisting:$Force
+        $temporaryPath = $null
+        if ($PassThru) {
+            Get-Item -LiteralPath $outputPath | Add-Member -MemberType NoteProperty -Name PackageId -Value $package.PackageIdentifier -PassThru |
+                Add-Member -MemberType NoteProperty -Name PackageVersion -Value $package.PackageVersion -PassThru |
+                Add-Member -MemberType NoteProperty -Name Architecture -Value $installer.Architecture -PassThru |
+                Add-Member -MemberType NoteProperty -Name InstallerType -Value $installer.InstallerType -PassThru |
+                Add-Member -MemberType NoteProperty -Name HashVerified -Value (-not $SkipHashValidation) -PassThru
+        }
+    } finally {
+        if ($temporaryPath) {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
         }
     }
 }
