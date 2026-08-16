@@ -162,6 +162,38 @@ Describe 'Get-LatestWingetVersion - Edge Cases' {
             # 2.0.0-beta is filtered by ignoreFolders (contains 'Beta'); 1.10.0 is the highest remaining
             $result.PackageVersion | Should -Be '1.10.0'
         }
+
+        It 'Should match the validation folder dot literally' {
+            Mock -CommandName Get-WingetPackageVersionEntry -MockWith {
+                @(
+                    [PSCustomObject]@{ name = '1.0.0'; type = 'dir' }
+                    [PSCustomObject]@{ name = 'Avalidation'; type = 'dir' }
+                )
+            } -ModuleName WinGetManifestFetcher
+            Mock -CommandName Get-GitHubContent -MockWith {
+                param($Path)
+                @{ Entries = @(
+                    @{
+                        name = 'Test.Package.installer.yaml'
+                        type = 'file'
+                        download_url = "https://mock/$($Path.Split('/')[-1])/installer.yaml"
+                    }
+                ) }
+            } -ModuleName WinGetManifestFetcher
+            Mock -CommandName Invoke-RestMethod -MockWith { param($Uri) $Uri } -ModuleName WinGetManifestFetcher
+            Mock -CommandName ConvertFrom-Yaml -MockWith {
+                param($Yaml)
+                $version = if ($Yaml -like '*/Avalidation/*') { 'Avalidation' } else { '1.0.0' }
+                @{ PackageIdentifier = 'Test.Package'; PackageVersion = $version; Installers = @() }
+            } -ModuleName WinGetManifestFetcher
+
+            $result = Get-LatestWingetVersion -App 'Test.Package' -VersionSource 'manifests/t/Test/Package'
+
+            $result.PackageVersion | Should -Be 'Avalidation'
+            Should -Invoke -CommandName Get-GitHubContent -ModuleName WinGetManifestFetcher -Times 1 -Exactly -ParameterFilter {
+                $Path -like '*/Avalidation'
+            }
+        }
         
         It 'Should handle non-standard version formats' {
             Mock -CommandName Get-GitHubContent -MockWith {
@@ -303,6 +335,23 @@ Describe 'Get-LatestWingetVersion - Edge Cases' {
             }
 
             Should -Invoke -CommandName Invoke-WingetGitHubRequest -ModuleName WinGetManifestFetcher -Times 0 -Exactly
+        }
+
+        It 'Should match wildcard metacharacters as literal package text' {
+            Mock -CommandName Invoke-WingetGitHubRequest -MockWith {
+                @{
+                    total_count = 1
+                    items = @(
+                        @{ path = 'manifests/a/Acme/Editor[Preview/1.0.0/Acme.Editor[Preview.installer.yaml' }
+                    )
+                }
+            } -ModuleName WinGetManifestFetcher
+
+            $result = InModuleScope WinGetManifestFetcher {
+                @(Search-WingetPackage -App 'Editor[Preview')
+            }
+
+            $result.PackageId | Should -Be 'Acme.Editor[Preview'
         }
 
         It 'Should hydrate broad-search candidates lazily until one succeeds' {

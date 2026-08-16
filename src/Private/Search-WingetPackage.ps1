@@ -56,13 +56,16 @@ function Search-WingetPackage {
             $packageName = $packageParts[1..($packageParts.Count - 1)] -join '.'
             $normalizedPackageId = $packageId -replace '[^\p{L}\p{Nd}]', ''
             $normalizedPackageName = $packageName -replace '[^\p{L}\p{Nd}]', ''
-            if ($packageId -notlike "*$App*" -and
-                $packageName -notlike "*$App*" -and
-                $App -notlike "*$packageName*" -and
-                (-not $normalizedApp -or
-                    ($normalizedPackageId -notlike "*$normalizedApp*" -and
-                        $normalizedPackageName -notlike "*$normalizedApp*" -and
-                        $normalizedApp -notlike "*$normalizedPackageName*"))) {
+            $comparison = [System.StringComparison]::OrdinalIgnoreCase
+            $rawMatch = $packageId.IndexOf($App, $comparison) -ge 0 -or
+                $packageName.IndexOf($App, $comparison) -ge 0 -or
+                $App.IndexOf($packageName, $comparison) -ge 0
+            $normalizedMatch = $normalizedApp -and (
+                $normalizedPackageId.IndexOf($normalizedApp, $comparison) -ge 0 -or
+                $normalizedPackageName.IndexOf($normalizedApp, $comparison) -ge 0 -or
+                $normalizedApp.IndexOf($normalizedPackageName, $comparison) -ge 0
+            )
+            if (-not $rawMatch -and -not $normalizedMatch) {
                 continue
             }
 

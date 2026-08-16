@@ -116,6 +116,29 @@ Describe 'Publisher resolution' {
         Should -Invoke Get-WingetGitHubTree -Times 3 -Exactly -ModuleName WinGetManifestFetcher
     }
 
+    It 'treats wildcard metacharacters as literal publisher text' {
+        Mock Get-WingetGitHubTree {
+            param($TreeReference)
+            switch ($TreeReference) {
+                'manifests-sha' { [PSCustomObject]@{ Entries = @(@{ type = 'tree'; path = 'a'; sha = 'a-sha' }); Truncated = $false } }
+                'a-sha' { [PSCustomObject]@{ Entries = @(@{ type = 'tree'; path = 'Acme[Tools'; sha = 'acme-sha' }); Truncated = $false } }
+                default { throw "Unexpected tree: $TreeReference" }
+            }
+        } -ModuleName WinGetManifestFetcher
+
+        $result = InModuleScope WinGetManifestFetcher {
+            $oldToken = $env:GITHUB_TOKEN
+            try {
+                $env:GITHUB_TOKEN = 'test-token'
+                @(Resolve-WingetPublisher -Publisher '[Tools')
+            } finally {
+                $env:GITHUB_TOKEN = $oldToken
+            }
+        }
+
+        $result.Name | Should -Be 'Acme[Tools'
+    }
+
     It 'requires authentication before a complete partial search' {
         Mock Get-WingetGitHubTree {
             param($TreeReference)

@@ -163,7 +163,7 @@ function Get-LatestWingetVersion {
 
             # Sort versions and get the latest
             Write-Verbose "Found $($versionDirs.Count) versions. Determining latest version..."
-            $ignoreFolders = 'X|VideoCapture|Telegraph|WiiBalanceBoard|Extension|Module|CN|.validation|Preview|Nightly|Beta|Alpha|Experimental|Canary|Dev|Test|RC|ReleaseCandidate|LTS|EXE'
+            $ignoreFolders = 'X|VideoCapture|Telegraph|WiiBalanceBoard|Extension|Module|CN|\.validation|Preview|Nightly|Beta|Alpha|Experimental|Canary|Dev|Test|RC|ReleaseCandidate|LTS|EXE'
             $sortedVersions = @($versionDirs |
                 Where-Object { $_.type -eq 'dir' -and $_.name -notmatch $ignoreFolders } |
                 Sort-Object -Property @{

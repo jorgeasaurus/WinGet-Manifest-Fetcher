@@ -38,7 +38,11 @@ function Resolve-WingetPublisher {
             Get-WingetGitHubTree -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -TreeReference $shard.sha
         }
 
-        foreach ($entry in @($shardTree.Entries | Where-Object { $_.type -eq 'tree' -and $_.sha -and $_.path -like "*$Publisher*" })) {
+        foreach ($entry in @($shardTree.Entries | Where-Object {
+            $_.type -eq 'tree' -and
+            $_.sha -and
+            $_.path.IndexOf($Publisher, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+        })) {
             $publisherMatches.Add([PSCustomObject]@{
                 Name = $entry.path
                 Path = "$script:ManifestPath/$($shard.path)/$($entry.path)"
