@@ -50,163 +50,82 @@ function Get-WingetPackagesByPublisher {
         [switch]$IncludeVersions,
         
         [Parameter()]
+        [ValidateRange(0, [int]::MaxValue)]
         [int]$MaxResults = 0
     )
     
-    process {
-        Write-Verbose "Searching for packages by publisher: $Publisher"
-        $packages = [System.Collections.Generic.List[PSCustomObject]]::new()
-        try {
-            # Generate cache key for publisher search
-            $cacheKey = "publisher_$($Publisher -replace '[^\w\-\.]', '_')_$(if($IncludeVersions){'withver'}else{'nover'})_$MaxResults"
-            
-            # Check cache first
-            $cachedResult = Get-CacheItem -Key $cacheKey
-            if ($cachedResult) {
-                Write-Verbose "Returning cached result for publisher: $Publisher"
-                return $cachedResult
-            }
-            
-            # First, try exact publisher match
-            $firstLetter = $Publisher.Substring(0, 1).ToLower()
-            $publisherPath = "$script:ManifestPath/$firstLetter/$Publisher"
-            
-            $publishersToCheck = [System.Collections.Generic.List[hashtable]]::new()
-            
+    Write-Verbose "Searching for packages by publisher: $Publisher"
+    $packages = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $cacheKey = New-WingetCacheKey -Namespace publisher -Label $Publisher -Value @($Publisher, [string][bool]$IncludeVersions, [string]$MaxResults)
+
+    # Check cache first
+    $cachedResult = Get-CacheItem -Key $cacheKey
+    if ($cachedResult) {
+        Write-Verbose "Returning cached result for publisher: $Publisher"
+        return $cachedResult
+    }
+
+    $publishersToCheck = @(Resolve-WingetPublisher -Publisher $Publisher -ErrorAction Stop)
+
+    if ($publishersToCheck.Count -eq 0) {
+        Write-Warning "No publishers found matching '$Publisher'"
+        Write-Warning "No packages found for publisher matching '$Publisher'"
+        return
+    }
+
+    Write-Verbose "Found $($publishersToCheck.Count) publisher(s) to check"
+
+    $addPackage = {
+        param($PublisherInfo, [string]$PackageName, [string]$ManifestPath)
+
+        $packageProps = @{
+            Publisher = $PublisherInfo.Name
+            PackageName = $PackageName
+            PackageIdentifier = "$($PublisherInfo.Name).$PackageName"
+            ManifestPath = $ManifestPath
+        }
+
+        if ($IncludeVersions) {
+            $packageProps['LatestVersion'] = $null
+
             try {
-                # Check if exact publisher exists
-                $content = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $publisherPath -ErrorAction Stop
-                
-                if ($content) {
-                    Write-Verbose "Found exact publisher match: $Publisher"
-                    $publishersToCheck.Add(@{
-                        Name = $Publisher
-                        Path = $publisherPath
-                    })
+                Write-Verbose "Getting version info for $($packageProps.PackageIdentifier)"
+                $versionInfo = Get-LatestWingetVersion -App $packageProps.PackageIdentifier -VersionSource $ManifestPath -ErrorAction SilentlyContinue
+                if ($versionInfo) {
+                    $packageProps['LatestVersion'] = $versionInfo.PackageVersion
                 }
             } catch {
-                Write-Verbose "No exact match for publisher '$Publisher', searching for partial matches..."
+                Write-Verbose "Could not get version for $($packageProps.PackageIdentifier): $_"
             }
-            
-            # If no exact match or user wants partial matches, search more broadly
-            if ($publishersToCheck.Count -eq 0) {
-                # Search in all letter directories
-                $searchLetters = @($firstLetter)
-                
-                # If the search term is short, also check other letters
-                if ($Publisher.Length -le 3) {
-                    $searchLetters = @('a'..'z' | ForEach-Object { $_.ToString() })
-                }
-                
-                foreach ($letter in $searchLetters) {
-                    try {
-                        $letterPath = "$script:ManifestPath/$letter"
-                        $publisherDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $letterPath -ErrorAction SilentlyContinue
-                        
-                        if ($publisherDirs) {
-                            $dirList = if ($publisherDirs -is [array]) { $publisherDirs } elseif ($publisherDirs.entries) { $publisherDirs.entries } else { @() }
-                            
-                            foreach ($dir in $dirList | Where-Object { $_.type -eq 'dir' }) {
-                                if ($dir.name -like "*$Publisher*") {
-                                    Write-Verbose "Found publisher match: $($dir.name)"
-                                    $publishersToCheck.Add(@{
-                                        Name = $dir.name
-                                        Path = $dir.path
-                                    })
-                                }
-                            }
-                        }
-                    } catch {
-                        # Continue searching - this is expected for non-existent paths
-                        Write-Verbose "Path not found: $testPath - continuing search"
-                    }
-                    
-                    # Stop if we've found enough publishers
-                    if ($MaxResults -gt 0 -and $publishersToCheck.Count -ge $MaxResults) {
-                        break
-                    }
-                }
-            }
-            
-            if ($publishersToCheck.Count -eq 0) {
-                Write-Warning "No publishers found matching '$Publisher'"
-                return
-            }
-            
-            Write-Verbose "Found $($publishersToCheck.Count) publisher(s) to check"
-            
-            # Process each publisher
-            foreach ($pub in $publishersToCheck) {
-                try {
-                    $packageDirs = Get-GitHubContent -OwnerName $script:WinGetRepoOwner -RepositoryName $script:WinGetRepoName -Path $pub.Path -ErrorAction Stop
-                    
-                    $packageList = if ($packageDirs -is [array]) { $packageDirs } elseif ($packageDirs.entries) { $packageDirs.entries } else { @() }
-                    
-                    foreach ($pkg in $packageList | Where-Object { $_.type -eq 'dir' }) {
-                        # Build base package info
-                        $packageProps = @{
-                            Publisher = $pub.Name
-                            PackageName = $pkg.name
-                            PackageIdentifier = "$($pub.Name).$($pkg.name)"
-                            ManifestPath = $pkg.path
-                        }
-                        
-                        # Get version information if requested
-                        if ($IncludeVersions) {
-                            $packageProps['LatestVersion'] = $null
-                            
-                            try {
-                                Write-Verbose "Getting version info for $($packageProps.PackageIdentifier)"
-                                $versionInfo = Get-LatestWingetVersion -App $packageProps.PackageIdentifier -VersionSource $pkg.path -ErrorAction SilentlyContinue
-                                if ($versionInfo) {
-                                    $packageProps['LatestVersion'] = $versionInfo.PackageVersion
-                                }
-                            } catch {
-                                Write-Verbose "Could not get version for $($packageProps.PackageIdentifier): $_"
-                            }
-                        }
-                        
-                        $packageInfo = [PSCustomObject]$packageProps
-                        
-                        $packages.Add($packageInfo)
-                        
-                        # Check if we've reached the maximum results
-                        if ($MaxResults -gt 0 -and $packages.Count -ge $MaxResults) {
-                            Write-Verbose "Reached maximum results limit of $MaxResults"
-                            break
-                        }
-                    }
-                } catch {
-                    Write-Warning "Error processing publisher $($pub.Name): $_"
-                }
-                
-                # Check if we've reached the maximum results
-                if ($MaxResults -gt 0 -and $packages.Count -ge $MaxResults) {
-                    break
-                }
-            }
-            
-            if ($packages.Count -gt 0) {
-                Set-CacheItem -Key $cacheKey -Data $packages
-            }
-            
-        } catch {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                $_.Exception,
-                'PublisherSearchError',
-                [System.Management.Automation.ErrorCategory]::NotSpecified,
-                $Publisher
-            ))
-            throw
+        }
+
+        $packages.Add([PSCustomObject]$packageProps)
+    }
+
+    # Process each publisher
+    foreach ($pub in $publishersToCheck) {
+        $remainingResults = if ($MaxResults -gt 0) { $MaxResults - $packages.Count } else { 0 }
+        $selectedPackagePaths = @(Get-WingetPublisherPackagePath -PublisherSha $pub.Sha -MaxResults $remainingResults)
+
+        foreach ($relativePackagePath in $selectedPackagePaths) {
+            $packageName = ($relativePackagePath -split '/') -join '.'
+            & $addPackage $pub $packageName "$($pub.Path)/$relativePackagePath"
+        }
+
+        # Check if we've reached the maximum results
+        if ($MaxResults -gt 0 -and $packages.Count -ge $MaxResults) {
+            break
         }
     }
-    
-    end {
-        if ($packages.Count -eq 0) {
-            Write-Warning "No packages found for publisher matching '$Publisher'"
-        } else {
-            Write-Verbose "Found $($packages.Count) package(s)"
-            return $packages
-        }
+
+    if ($packages.Count -gt 0) {
+        Set-CacheItem -Key $cacheKey -Data $packages
     }
+    if ($packages.Count -eq 0) {
+        Write-Warning "No packages found for publisher matching '$Publisher'"
+        return
+    }
+
+    Write-Verbose "Found $($packages.Count) package(s)"
+    return $packages
 }

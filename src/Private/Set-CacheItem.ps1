@@ -23,6 +23,7 @@ function Set-CacheItem {
     }
     
     $cacheFile = Join-Path -Path $script:CacheDirectory -ChildPath "$Key.json"
+    $temporaryFile = Join-Path -Path $script:CacheDirectory -ChildPath ".$Key.$([Guid]::NewGuid().ToString('N')).tmp"
     
     try {
         $cacheEntry = @{
@@ -30,10 +31,25 @@ function Set-CacheItem {
             Timestamp = (Get-Date).ToString('o')
             Data = $Data
         }
-        
-        $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Force
+
+        $json = $cacheEntry | ConvertTo-Json -Depth 10
+        $bytes = (New-Object Text.UTF8Encoding($false)).GetBytes($json)
+        $stream = New-Object IO.FileStream($temporaryFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $stream.Write($bytes, 0, $bytes.Length)
+            $stream.Flush($true)
+        } finally {
+            $stream.Dispose()
+        }
+
+        Complete-WingetAtomicFileWrite -TemporaryPath $temporaryFile -DestinationPath $cacheFile -ReplaceExisting
+        $temporaryFile = $null
         Write-Verbose "Cached: $Key"
     } catch {
         Write-Verbose "Cache error writing $Key`: $_"
+    } finally {
+        if ($temporaryFile) {
+            Remove-Item -LiteralPath $temporaryFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }

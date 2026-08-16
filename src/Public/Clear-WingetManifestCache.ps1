@@ -41,17 +41,16 @@ function Clear-WingetManifestCache {
         return
     }
     
-    if ($Force -or $PSCmdlet.ShouldProcess("$($cacheFiles.Count) cached items", "Clear")) {
+    if ($Force) {
+        $ConfirmPreference = 'None'
+    }
+
+    if ($PSCmdlet.ShouldProcess("$($cacheFiles.Count) cached items", "Clear")) {
         try {
             Remove-Item -Path (Join-Path -Path $script:CacheDirectory -ChildPath "*.json") -Force
             Write-Verbose "Cleared $($cacheFiles.Count) cached items"
         } catch {
-            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
-                $_.Exception,
-                'CacheClearFailed',
-                [System.Management.Automation.ErrorCategory]::WriteError,
-                $script:CacheDirectory
-            ))
+            Write-Error -Exception $_.Exception -ErrorId CacheClearFailed -Category WriteError -TargetObject $script:CacheDirectory
         }
     }
 }
